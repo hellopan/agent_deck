@@ -31,6 +31,9 @@ const projectsMessage = "agentdeck-projects-v1"
 const taskLogMessage = "agentdeck-task-log-v1 "
 const remoteCancelMessage = "agentdeck-task-cancel-v1 "
 const receiptMessage = "agentdeck-task-receipt-v1 "
+const queueMessage = "agentdeck-queue-v1"
+const approvalsMessage = "agentdeck-approvals-v1"
+const decideMessage = "agentdeck-approve-v1 "
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -42,7 +45,7 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
-	const usage = "usage: agentdeck-lab {init|relay|enroll|agent|pair-invite|pair-confirm|probe|projects|submit|task-receipt|inbox|review-task|cancel-task|remote-cancel|task-log|service|codex-check|codex-task} [options]"
+	const usage = "usage: agentdeck-lab {init|relay|enroll|agent|pair-invite|pair-confirm|probe|projects|queue|submit|task-receipt|approvals|approve|inbox|cancel-task|remote-cancel|task-log|service|codex-check} [options]"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
@@ -105,13 +108,17 @@ func run(ctx context.Context, args []string) error {
 			_, err = fmt.Fprintln(os.Stdout, id)
 		}
 		return err
-	case "agent", "probe", "projects", "task-log", "submit", "remote-cancel", "task-receipt":
+	case "agent", "probe", "projects", "task-log", "submit", "remote-cancel", "task-receipt", "queue", "approvals", "approve":
 		path := options.String("config", "", "endpoint configuration")
 		policy := options.String("projects", "", "absolute local policy path (agent only)")
 		logDir := options.String("task-logs", "", "absolute local task log directory (agent only)")
+		codexExecutable := options.String("codex", "", "absolute path to Codex CLI (agent only)")
+		codexHome := options.String("codex-home", "", "absolute path to the account Codex home (agent only)")
 		query := addTaskLogOptions(options)
 		var peer peerOptions
 		options.StringVar(&peer.pairing, "pairing-dir", "", "absolute private pairing directory (agent only)")
+		options.StringVar(&peer.approvalID, "approval-id", "", "pending approval ID (approve only)")
+		options.StringVar(&peer.decision, "decision", "", "accept or decline (approve only)")
 		addSubmitOptions(options, &peer)
 		device := options.String("device", "", "lab device a or b")
 		if err := parseFlags(options, args[1:]); err != nil {
@@ -121,6 +128,7 @@ func run(ctx context.Context, args []string) error {
 			return errors.New("invalid device ID")
 		}
 		peer.policy, peer.logDir, peer.query = *policy, *logDir, *query
+		peer.codex = codexOptions{policy: *policy, executable: *codexExecutable, home: *codexHome}
 		peer.submission.ProjectID = query.ProjectID
 		return runPeer(ctx, mode, *path, *device, log.Default(), peer)
 	case "pair-invite":
@@ -155,45 +163,29 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		return checkCodex(ctx, *codex, log.Default())
-	case "codex-task":
-		codex := addCodexOptions(options)
-		taskPath := options.String("prompt-file", "", "local UTF-8 prompt file")
-		logDir := options.String("task-logs", "", "absolute directory for local task logs")
-		if err := parseFlags(options, args[1:]); err != nil {
-			return err
-		}
-		return runLocalCodexTask(ctx, *codex, *taskPath, *logDir)
 	case "cancel-task":
-		logs := options.String("task-logs", "", "absolute local task log directory")
+		policy := options.String("projects", "", "absolute local project policy")
+		logDir := options.String("task-logs", "", "absolute local task log directory")
+		inbox := options.String("task-inbox", "", "absolute local task inbox directory")
+		project := options.String("project-id", "", "authorized project ID")
 		id := options.String("task-id", "", "existing task ID")
 		if err := parseFlags(options, args[1:]); err != nil {
 			return err
 		}
-		return codexprobe.RequestCancellation(*logs, *id)
+		return requestTaskCancel(peerOptions{policy: *policy, logDir: *logDir, inbox: *inbox},
+			taskLogQuery{ProjectID: *project, TaskID: *id})
 	case "inbox":
+		policy := options.String("projects", "", "absolute local project policy")
+		logDir := options.String("task-logs", "", "absolute local task log directory")
 		inbox := options.String("task-inbox", "", "absolute local task inbox directory")
 		if err := parseFlags(options, args[1:]); err != nil {
 			return err
 		}
-		items, err := listInbox(*inbox)
+		items, err := listQueue(peerOptions{policy: *policy, logDir: *logDir, inbox: *inbox})
 		if err != nil {
 			return err
 		}
-		return json.NewEncoder(os.Stdout).Encode(items)
-	case "review-task":
-		codex := addCodexOptions(options)
-		inbox := options.String("task-inbox", "", "absolute local task inbox directory")
-		id := options.String("receipt-id", "", "receipt returned by submit")
-		logDir := options.String("task-logs", "", "absolute directory for local task logs")
-		accept := options.Bool("accept-once", false, "run the reviewed task once in read-only mode")
-		decline := options.Bool("decline", false, "reject the reviewed task")
-		if err := parseFlags(options, args[1:]); err != nil {
-			return err
-		}
-		if *accept && *decline {
-			return errors.New("choose either -accept-once or -decline")
-		}
-		return reviewTask(ctx, *codex, *inbox, *id, *logDir, *accept, *decline)
+		return json.NewEncoder(os.Stdout).Encode(queueView{Items: items})
 	case "service":
 		name := options.String("name", "AgentDeckLab", "Windows service name registered with SCM")
 		path := options.String("config", "", "absolute endpoint configuration path")
@@ -255,18 +247,6 @@ func (config codexOptions) resolve() (codexprobe.Config, error) {
 	}, nil
 }
 
-func runLocalCodexTask(ctx context.Context, config codexOptions, taskPath, logDir string) error {
-	resolved, err := config.resolve()
-	if err != nil {
-		return err
-	}
-	prompt, err := readPromptFile(taskPath, 16*1024)
-	if err != nil {
-		return err
-	}
-	return runResolvedTask(ctx, resolved, config, string(prompt), logDir, "")
-}
-
 func readPromptFile(taskPath string, maxBytes int64) ([]byte, error) {
 	file, err := os.Open(taskPath)
 	if err != nil {
@@ -281,62 +261,6 @@ func readPromptFile(taskPath string, maxBytes int64) ([]byte, error) {
 		return nil, errors.New("prompt file must be a regular file")
 	}
 	return io.ReadAll(io.LimitReader(file, maxBytes+1))
-}
-
-func runResolvedTask(ctx context.Context, resolved codexprobe.Config, config codexOptions, prompt, logDir, taskID string) error {
-	projectID := config.projectID
-	output := json.NewEncoder(os.Stdout)
-	var journal *codexprobe.Journal
-	if logDir != "" {
-		var err error
-		if taskID == "" {
-			journal, err = codexprobe.NewJournal(logDir, projectID, resolved.ProjectDir)
-		} else {
-			journal, err = codexprobe.OpenNewJournal(logDir, projectID, resolved.ProjectDir, taskID)
-		}
-		if err != nil {
-			return err
-		}
-		defer journal.Close()
-		if err := output.Encode(map[string]string{"type": "task/created", "taskId": journal.ID}); err != nil {
-			return errors.Join(err, journal.Finish("failed"))
-		}
-	}
-	var cancellation func() (bool, error)
-	if journal != nil {
-		cancellation = journal.CancellationRequested
-	}
-	status, err := runWhileAuthorized(ctx, config, resolved.ProjectDir, func(runCtx context.Context, check func() error) (string, error) {
-		return codexprobe.RunReadOnlyTask(runCtx, resolved, prompt, func(event codexprobe.TaskEvent) error {
-			if err := check(); err != nil {
-				return err
-			}
-			if journal != nil {
-				if err := journal.Append(event); err != nil {
-					return err
-				}
-			}
-			return output.Encode(event)
-		})
-	}, cancellation)
-	if journal != nil {
-		if errors.Is(err, errProjectRevoked) || errors.Is(err, errTaskCanceled) {
-			status = "interrupted"
-		} else if status == "" {
-			status = "failed"
-			if ctx.Err() != nil {
-				status = "interrupted"
-			}
-		}
-		err = errors.Join(err, journal.Finish(status))
-	}
-	if err != nil {
-		return err
-	}
-	if status != "completed" {
-		return fmt.Errorf("Codex task ended with status %s", status)
-	}
-	return nil
 }
 
 func runServiceAgent(ctx context.Context, configPath, logPath, device string, codex codexOptions, logDir, inbox string) error {
@@ -356,7 +280,7 @@ func runServiceAgent(ctx context.Context, configPath, logPath, device string, co
 			}
 		})
 	}
-	err = runPeer(ctx, "agent", configPath, device, logger, peerOptions{policy: codex.policy, logDir: logDir, inbox: inbox})
+	err = runPeer(ctx, "agent", configPath, device, logger, peerOptions{policy: codex.policy, logDir: logDir, inbox: inbox, codex: codex})
 	cancel()
 	checks.Wait()
 	if err != nil {
@@ -425,6 +349,9 @@ type peerOptions struct {
 	inbox      string
 	promptPath string
 	submission taskSubmission
+	codex      codexOptions
+	approvalID string
+	decision   string
 }
 
 func runPeer(ctx context.Context, mode, path, device string, logger *log.Logger, opts peerOptions) error {
@@ -434,8 +361,9 @@ func runPeer(ctx context.Context, mode, path, device string, logger *log.Logger,
 	if mode == "agent" && opts.logDir != "" && (!filepath.IsAbs(opts.logDir) || !filepath.IsAbs(opts.policy)) {
 		return errors.New("task logs require absolute log and project policy paths")
 	}
-	if mode == "agent" && opts.inbox != "" && (!filepath.IsAbs(opts.inbox) || !filepath.IsAbs(opts.policy)) {
-		return errors.New("task inbox requires absolute inbox and project policy paths")
+	if mode == "agent" && opts.inbox != "" &&
+		(opts.logDir == "" || !filepath.IsAbs(opts.inbox) || !filepath.IsAbs(opts.logDir) || !filepath.IsAbs(opts.policy)) {
+		return errors.New("task inbox requires absolute inbox, task log and project policy paths")
 	}
 	var config peerConfig
 	if err := loadConfig(path, &config); err != nil {
@@ -484,54 +412,14 @@ func runPeer(ctx context.Context, mode, path, device string, logger *log.Logger,
 				return nil
 			}
 		}
+		runtime := &agentRuntime{peer: opts, device: device, logger: logger, trust: peerTrust}
+		// The queue consumer outlives every tunnel: a phone connects to poll,
+		// not to keep the task alive.
+		runner, stopRunner := context.WithCancel(ctx)
+		defer stopRunner()
+		go runtime.run(runner)
 		logger.Printf("lab agent %s connecting to relay", device)
-		err := transport.RunAgent(ctx, address.String(), entry.Token, client, inner, func(conn *tls.Conn) {
-			conn.SetDeadline(time.Now().Add(5 * time.Second))
-			line, err := bufio.NewReaderSize(conn, maxSubmission).ReadSlice('\n')
-			if err != nil {
-				return
-			}
-			if opts.pairing != "" {
-				phone := conn.ConnectionState().PeerCertificates[0]
-				if code, ok := strings.CutPrefix(string(line), pairingMessage); ok {
-					paired := submitPairing(opts.pairing, device, code, phone) == nil
-					json.NewEncoder(conn).Encode(map[string]bool{"pending": paired})
-					return
-				}
-				if !authorizedPhone(opts.pairing, device, phone, peerTrust) {
-					fmt.Fprintln(conn, `{"error":"phone not paired"}`)
-					return
-				}
-			}
-			switch string(line) {
-			case probeMessage + "\n":
-				if _, err := fmt.Fprintln(conn, probeMessage+":"+device); err == nil {
-					logger.Printf("device %s answered an authenticated probe", device)
-				}
-			case projectsMessage + "\n":
-				if opts.policy == "" {
-					fmt.Fprintln(conn, `{"error":"project policy unavailable"}`)
-					return
-				}
-				ids, err := projects.List(opts.policy)
-				if err != nil {
-					logger.Printf("project listing failed: %v", err)
-					fmt.Fprintln(conn, `{"error":"project policy unavailable"}`)
-					return
-				}
-				json.NewEncoder(conn).Encode(ids)
-			default:
-				if query, ok := strings.CutPrefix(string(line), taskLogMessage); ok {
-					serveTaskLog(conn, opts, query)
-				} else if request, ok := strings.CutPrefix(string(line), remoteCancelMessage); ok {
-					serveRemoteCancel(conn, opts, request)
-				} else if request, ok := strings.CutPrefix(string(line), receiptMessage); ok {
-					serveReceipt(conn, opts, request)
-				} else if request, ok := strings.CutPrefix(string(line), submitMessage); ok {
-					serveSubmission(conn, opts, request, func(err error) { logger.Printf("task submission refused: %v", err) })
-				}
-			}
-		})
+		err := transport.RunAgent(ctx, address.String(), entry.Token, client, inner, runtime.serve)
 		if errors.Is(err, context.Canceled) {
 			return nil
 		}
@@ -553,6 +441,15 @@ func probe(ctx context.Context, endpoint, token string, client *http.Client, inn
 	defer conn.Close()
 	if mode == "task-receipt" {
 		return queryReceipt(conn, opts)
+	}
+	if mode == "queue" {
+		return fetchQueue(conn)
+	}
+	if mode == "approvals" {
+		return fetchApprovals(conn)
+	}
+	if mode == "approve" {
+		return sendDecision(conn, opts)
 	}
 	if mode == "remote-cancel" {
 		return sendRemoteCancel(conn, opts.query)

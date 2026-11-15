@@ -15,14 +15,52 @@ type cancelReply struct {
 	Requested bool `json:"requested"`
 }
 
+// requestTaskCancel records a stop request. A queued request is dropped before
+// it starts; a running one is noticed by the runner on its next check.
+func requestTaskCancel(opts peerOptions, query taskLogQuery) error {
+	if !validReceiptID(query.TaskID) {
+		return errors.New("cancellation requires a task ID")
+	}
+	directory, err := projects.Resolve(opts.policy, query.ProjectID)
+	if err != nil {
+		return err
+	}
+	canceled := false
+	if opts.inbox != "" {
+		root, err := os.OpenRoot(opts.inbox)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		record, err := readInboxRecord(root, query.TaskID)
+		if err != nil {
+			return err
+		}
+		if record.ProjectID != query.ProjectID || record.Directory != directory {
+			return errors.New("task is outside the authorized project")
+		}
+		if err := writeMarker(root, query.TaskID+".cancel.log"); err != nil {
+			return err
+		}
+		canceled = true
+	}
+	// A running turn only sees its own journal marker, so record both.
+	if opts.logDir != "" {
+		if err := codexprobe.RequestProjectCancellation(opts.logDir, query.TaskID, query.ProjectID, directory); err == nil {
+			canceled = true
+		}
+	}
+	if !canceled {
+		return errors.New("task cancellation unavailable")
+	}
+	return nil
+}
+
 func serveRemoteCancel(conn io.Writer, opts peerOptions, raw string) {
 	var query taskLogQuery
 	requested := false
-	if opts.logDir != "" && len(raw) <= 1024 && json.Unmarshal([]byte(raw), &query) == nil && query.After == 0 {
-		dir, err := projects.Resolve(opts.policy, query.ProjectID)
-		if err == nil {
-			requested = codexprobe.RequestProjectCancellation(opts.logDir, query.TaskID, query.ProjectID, dir) == nil
-		}
+	if len(raw) <= 1024 && json.Unmarshal([]byte(raw), &query) == nil && query.After == 0 {
+		requested = requestTaskCancel(opts, query) == nil
 	}
 	json.NewEncoder(conn).Encode(cancelReply{Requested: requested})
 }

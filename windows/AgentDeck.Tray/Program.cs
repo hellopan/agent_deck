@@ -97,7 +97,7 @@ internal sealed partial class ReviewWindow : Form
     private readonly TextBox logs = new();
     private readonly TextBox codex = new();
     private readonly TextBox home = new();
-    private readonly ListBox pending = new() { Dock = DockStyle.Fill, AccessibleName = "待审核任务" };
+    private readonly ListBox pending = new() { Dock = DockStyle.Fill, AccessibleName = "任务队列" };
     private readonly TextBox detail = new()
     {
         Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
@@ -357,50 +357,44 @@ internal sealed partial class ReviewWindow : Form
 
     private async Task RefreshInboxAsync()
     {
-        var output = await RunAsync("inbox", "-task-inbox", RequirePath(inbox));
-        var items = JsonSerializer.Deserialize<InboxItem[]>(output, Json) ?? [];
-        var selectedID = (pending.SelectedItem as InboxItem)?.TaskId;
+        var output = await RunAsync("inbox", "-task-inbox", RequirePath(inbox),
+            "-projects", RequirePath(projects), "-task-logs", RequirePath(logs));
+        var items = JsonSerializer.Deserialize<QueueView>(output, Json)?.Items ?? [];
+        var selectedID = (pending.SelectedItem as QueueItem)?.TaskId;
         pending.Items.Clear();
         pending.Items.AddRange(items);
         var previousIndex = Array.FindIndex(items, item => item.TaskId == selectedID);
         if (items.Length > 0)
             pending.SelectedIndex = Math.Max(0, previousIndex);
-        inboxCount.Text = items.Length == 0 ? "暂无待审核任务" : $"待审核 · {items.Length}";
-        status.Text = items.Length == 0 ? "暂无待审核任务。" : $"已加载 {items.Length} 条待审核任务。";
+        var active = items.Count(item => item.Status is "queued" or "running");
+        inboxCount.Text = items.Length == 0 ? "队列为空" : $"队列 · {active} 条未结束";
+        status.Text = items.Length == 0 ? "队列为空。" : $"已加载 {items.Length} 条任务。";
     }
 
-    private InboxItem Selected() => pending.SelectedItem as InboxItem
-        ?? throw new InvalidOperationException("请先选择一条待审核任务。");
+    private QueueItem Selected() => pending.SelectedItem as QueueItem
+        ?? throw new InvalidOperationException("请先选择一条任务。");
 
-    private Task<string> PreviewAsync(InboxItem item) =>
-        RunAsync("review-task", "-task-inbox", RequirePath(inbox), "-receipt-id", item.TaskId);
-
-    private static string FormatPreview(InboxItem item, string json)
+    private static string FormatPreview(QueueItem item)
     {
-        var task = JsonSerializer.Deserialize<ReviewPreview>(json, Json);
-        if (task?.ProjectId != item.ProjectId || task.Prompt is null)
-            throw new InvalidDataException("任务记录与所选项目不一致。");
-        return $"项目 {item.ProjectId}\r\n任务 {item.TaskId}\r\n\r\n{task.Prompt}";
+        var submitted = item.SubmittedAt.ToLocalTime().ToString("MM-dd HH:mm");
+        return $"项目 {item.ProjectId}\r\n任务 {item.TaskId}\r\n状态 {item.Status}    提交 {submitted}\r\n\r\n{item.Prompt}";
     }
 
-    private async Task ReviewAsync(bool accept)
+    // 审批只在手机上完成。这里能做的是叫停，以及查看任务将要做什么。
+    private async Task CancelAsync()
     {
         var item = Selected();
-        detail.Text = FormatPreview(item, await PreviewAsync(item));
-        var action = accept ? "批准启动一次只读任务" : "拒绝任务";
-        if (MessageBox.Show(this, $"确认{action}？\n\n{detail.Text}",
-                "确认任务决定", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+        detail.Text = FormatPreview(item);
+        if (MessageBox.Show(this, $"确认叫停这个任务？\r\n\r\n{detail.Text}",
+                "确认叫停", MessageBoxButtons.YesNo, MessageBoxIcon.Question, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
         {
             status.Text = "已取消。";
             return;
         }
-        var args = new List<string> { "review-task", "-task-inbox", RequirePath(inbox), "-receipt-id", item.TaskId };
-        if (accept)
-            args.AddRange(["-accept-once", "-codex", RequirePath(codex), "-codex-home", RequirePath(home),
-                "-projects", RequirePath(projects), "-project-id", item.ProjectId, "-task-logs", RequirePath(logs)]);
-        else
-            args.Add("-decline");
-        detail.Text = await RunAsync(args.ToArray());
+        await RunAsync("cancel-task", "-task-inbox", RequirePath(inbox),
+            "-projects", RequirePath(projects), "-project-id", item.ProjectId,
+            "-task-id", item.TaskId, "-task-logs", RequirePath(logs));
+        status.Text = "已请求叫停，等待 Agent 收尾。";
         await RefreshInboxAsync();
     }
 
@@ -454,11 +448,12 @@ internal sealed partial class ReviewWindow : Form
         return await output;
     }
 
-    private sealed record InboxItem(string TaskId, string ProjectId)
+    private sealed record QueueItem(string TaskId, string ProjectId, string Directory, string Status,
+        DateTimeOffset SubmittedAt, string Summary, string Prompt)
     {
-        public override string ToString() => $"{ProjectId}    {TaskId}";
+        public override string ToString() => $"{ProjectId}    {Status}    {Summary}";
     }
 
-    private sealed record ReviewPreview(string ProjectId, string Prompt);
+    private sealed record QueueView(QueueItem[] Items);
     private sealed record TrayPaths(string Inbox, string Projects, string Logs, string Codex, string Home);
 }

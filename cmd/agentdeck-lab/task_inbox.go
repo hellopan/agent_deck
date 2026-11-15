@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,14 +11,30 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
+	"github.com/hellopan/agent_deck/internal/codexprobe"
 	"github.com/hellopan/agent_deck/internal/projects"
 )
 
 const submitMessage = "agentdeck-task-submit-v1 "
 const maxSubmission = 24 * 1024
+
+// A stored request moves queued -> running -> one terminal status. Nothing
+// waits for a human at the keyboard: the queue is consumed by the Agent and
+// only tool requests stop for an approval.
+const (
+	statusQueued   = "queued"
+	statusRunning  = "running"
+	statusCanceled = "canceled"
+)
+
+// staleClaim is how long a claimed request may sit without a journal before it
+// is reported as failed. It bounds the damage of a crash between the two.
+const staleClaim = 2 * time.Minute
 
 type taskSubmission struct {
 	RequestID string `json:"requestId"`
@@ -36,6 +50,25 @@ type taskReceipt struct {
 type inboxRecord struct {
 	taskSubmission
 	Directory string `json:"directory"`
+	// PeerID is the paired phone that submitted the request. It scopes the
+	// approvals raised while the task runs.
+	PeerID string `json:"peerId,omitempty"`
+}
+
+// queueItem is what the queue view returns to a paired phone and to the tray.
+type queueItem struct {
+	TaskID    string    `json:"taskId"`
+	ProjectID string    `json:"projectId"`
+	Directory string    `json:"directory"`
+	Status    string    `json:"status"`
+	Submitted time.Time `json:"submittedAt"`
+	Summary   string    `json:"summary"`
+	Prompt    string    `json:"prompt"`
+}
+
+type queuedTask struct {
+	TaskID string
+	Record inboxRecord
 }
 
 func addSubmitOptions(flags *flag.FlagSet, opts *peerOptions) {
@@ -49,9 +82,14 @@ func validSubmission(s taskSubmission) bool {
 		strings.TrimSpace(s.Prompt) != "" && len(s.Prompt) <= 4096 && utf8.ValidString(s.Prompt)
 }
 
-// saveSubmission leaves a durable, host-local request for review. Retrying an
+func validTaskStatus(status string) bool {
+	return status == statusQueued || status == statusRunning || status == statusCanceled ||
+		codexprobe.IsFinalTaskStatus(status)
+}
+
+// saveSubmission leaves a durable, host-local request for the queue. Retrying an
 // identical submission returns its receipt without creating another request.
-func saveSubmission(opts peerOptions, submission taskSubmission) (taskReceipt, error) {
+func saveSubmission(opts peerOptions, peerID string, submission taskSubmission) (taskReceipt, error) {
 	if opts.inbox == "" || !validSubmission(submission) {
 		return taskReceipt{}, errors.New("invalid submission or inbox disabled")
 	}
@@ -60,7 +98,7 @@ func saveSubmission(opts peerOptions, submission taskSubmission) (taskReceipt, e
 		return taskReceipt{}, err
 	}
 	taskID := receiptID(submission.RequestID)
-	data, err := json.Marshal(inboxRecord{taskSubmission: submission, Directory: directory})
+	data, err := json.Marshal(inboxRecord{taskSubmission: submission, Directory: directory, PeerID: peerID})
 	if err != nil {
 		return taskReceipt{}, err
 	}
@@ -72,49 +110,85 @@ func saveSubmission(opts peerOptions, submission taskSubmission) (taskReceipt, e
 	name := taskID + ".local.json"
 	err = publishSubmission(root, name, data)
 	if errors.Is(err, os.ErrExist) {
-		existing, err := root.Open(name)
-		if err != nil {
-			return taskReceipt{}, err
+		existing, readErr := readInboxRecord(root, taskID)
+		if readErr != nil {
+			return taskReceipt{}, readErr
 		}
-		previous, err := io.ReadAll(io.LimitReader(existing, maxSubmission+1))
-		closeErr := existing.Close()
-		if err != nil || !bytes.Equal(previous, data) {
+		if existing.taskSubmission != submission {
 			return taskReceipt{}, errors.New("task request conflicts with an existing record")
-		}
-		if closeErr != nil {
-			return taskReceipt{}, closeErr
 		}
 	} else if err != nil {
 		return taskReceipt{}, err
 	}
-	status, err := reviewStatus(root, taskID)
+	status, err := taskState(root, opts.logDir, submission.ProjectID, directory, taskID)
 	if err != nil {
 		return taskReceipt{}, err
 	}
 	return taskReceipt{TaskID: taskID, Status: status}, nil
 }
 
-func reviewStatus(root *os.Root, id string) (string, error) {
-	file, err := root.Open(id + ".claimed.log")
+// taskState derives the queue state from the markers this package owns and the
+// journal the runner writes.
+func taskState(root *os.Root, logDir, projectID, directory, id string) (string, error) {
+	claimedAt, claimed, err := readMarker(root, id+".claimed.log")
+	if err != nil {
+		return "", err
+	}
+	if !claimed {
+		if _, canceled, err := readMarker(root, id+".cancel.log"); err != nil {
+			return "", err
+		} else if canceled {
+			return statusCanceled, nil
+		}
+		return statusQueued, nil
+	}
+	if logDir == "" {
+		return statusRunning, nil
+	}
+	terminal, err := codexprobe.FinalJournalStatus(logDir, id, projectID, directory)
 	if errors.Is(err, os.ErrNotExist) {
-		return "awaiting_local_review", nil
+		// The claim outlived the process that took it.
+		if time.Since(claimedAt) > staleClaim {
+			return "failed", nil
+		}
+		return statusRunning, nil
 	}
 	if err != nil {
 		return "", err
+	}
+	if terminal != "" {
+		return terminal, nil
+	}
+	return statusRunning, nil
+}
+
+func readMarker(root *os.Root, name string) (time.Time, bool, error) {
+	file, err := root.Open(name)
+	if errors.Is(err, os.ErrNotExist) {
+		return time.Time{}, false, nil
+	}
+	if err != nil {
+		return time.Time{}, false, err
 	}
 	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, 32))
+	data, err := io.ReadAll(io.LimitReader(file, 64))
 	if err != nil {
-		return "", err
+		return time.Time{}, false, err
 	}
-	switch string(data) {
-	case "declined":
-		return "declined", nil
-	case "", "claimed": // Empty markers were written by earlier versions.
-		return "claimed", nil
-	default:
-		return "", errors.New("invalid task review marker")
+	at, err := time.Parse(time.RFC3339, strings.TrimSpace(string(data)))
+	if err != nil {
+		// A marker from an older build carries no timestamp.
+		return time.Time{}, true, nil
 	}
+	return at, true, nil
+}
+
+func writeMarker(root *os.Root, name string) error {
+	err := publishSubmission(root, name, []byte(time.Now().UTC().Format(time.RFC3339)))
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	return err
 }
 
 func publishSubmission(root *os.Root, name string, data []byte) error {
@@ -161,61 +235,25 @@ func readInboxRecord(root *os.Root, id string) (inboxRecord, error) {
 	return record, nil
 }
 
-func reviewTask(ctx context.Context, config codexOptions, inbox, id, logDir string, accept, decline bool) error {
-	if !filepath.IsAbs(inbox) || len(id) != 32 || strings.ToLower(id) != id {
-		return errors.New("review requires an absolute inbox path and a receipt ID")
+func promptSummary(prompt string) string {
+	line := strings.TrimSpace(prompt)
+	if index := strings.IndexByte(line, '\n'); index >= 0 {
+		line = strings.TrimSpace(line[:index])
 	}
-	if _, err := hex.DecodeString(id); err != nil {
-		return errors.New("invalid receipt ID")
+	if runes := []rune(line); len(runes) > 96 {
+		return string(runes[:96]) + "…"
 	}
-	root, err := os.OpenRoot(inbox)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
-	record, err := readInboxRecord(root, id)
-	if err != nil {
-		return err
-	}
-	if decline {
-		if err := publishSubmission(root, id+".claimed.log", []byte("declined")); err != nil {
-			return fmt.Errorf("record task rejection: %w", err)
-		}
-		return json.NewEncoder(os.Stdout).Encode(taskReceipt{TaskID: id, Status: "declined"})
-	}
-	if !accept {
-		return json.NewEncoder(os.Stdout).Encode(record.taskSubmission)
-	}
-	if config.projectID != record.ProjectID {
-		return errors.New("review must specify the request's project ID")
-	}
-	if !filepath.IsAbs(logDir) {
-		return errors.New("review requires an absolute task log directory")
-	}
-	resolved, err := config.resolve()
-	if err != nil {
-		return err
-	}
-	if resolved.ProjectDir != record.Directory {
-		return errors.New("project directory changed since submission")
-	}
-	if err := publishSubmission(root, id+".claimed.log", []byte("claimed")); err != nil {
-		return fmt.Errorf("claim task for one-time execution: %w", err)
-	}
-	return runResolvedTask(ctx, resolved, config, record.Prompt, logDir, id)
+	return line
 }
 
-type inboxItem struct {
-	TaskID    string `json:"taskId"`
-	ProjectID string `json:"projectId"`
-}
-
-// listInbox exposes only pending metadata. Review reveals the prompt on demand.
-func listInbox(inbox string) ([]inboxItem, error) {
-	if !filepath.IsAbs(inbox) {
+// listQueue reports every stored request the caller may still see. Requests for
+// projects that are no longer authorized are omitted rather than shown as
+// failures of the queue.
+func listQueue(opts peerOptions) ([]queueItem, error) {
+	if !filepath.IsAbs(opts.inbox) {
 		return nil, errors.New("task inbox requires an absolute path")
 	}
-	root, err := os.OpenRoot(inbox)
+	root, err := os.OpenRoot(opts.inbox)
 	if err != nil {
 		return nil, err
 	}
@@ -229,41 +267,88 @@ func listInbox(inbox string) ([]inboxItem, error) {
 	if err != nil {
 		return nil, err
 	}
-	items := make([]inboxItem, 0)
+	items := make([]queueItem, 0)
 	for _, entry := range entries {
 		id, ok := strings.CutSuffix(entry.Name(), ".local.json")
-		if !ok || len(id) != 32 || entry.Type() != 0 {
-			continue
-		}
-		if _, err := hex.DecodeString(id); err != nil {
-			continue
-		}
-		status, err := reviewStatus(root, id)
-		if err != nil {
-			return nil, err
-		}
-		if status != "awaiting_local_review" {
+		if !ok || !validReceiptID(id) || entry.Type() != 0 {
 			continue
 		}
 		record, err := readInboxRecord(root, id)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, inboxItem{TaskID: id, ProjectID: record.ProjectID})
+		if _, err := projects.Resolve(opts.policy, record.ProjectID); err != nil {
+			continue
+		}
+		status, err := taskState(root, opts.logDir, record.ProjectID, record.Directory, id)
+		if err != nil {
+			return nil, err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, queueItem{
+			TaskID: id, ProjectID: record.ProjectID, Directory: record.Directory,
+			Status: status, Submitted: info.ModTime().UTC(), Summary: promptSummary(record.Prompt), Prompt: record.Prompt,
+		})
 	}
+	sort.Slice(items, func(a, b int) bool {
+		if items[a].Submitted.Equal(items[b].Submitted) {
+			return items[a].TaskID < items[b].TaskID
+		}
+		return items[a].Submitted.After(items[b].Submitted)
+	})
 	return items, nil
 }
 
-func serveSubmission(conn io.Writer, opts peerOptions, raw string, report func(error)) {
-	var submission taskSubmission
-	receipt := taskReceipt{}
-	if err := json.Unmarshal([]byte(raw), &submission); err == nil {
-		receipt, err = saveSubmission(opts, submission)
-		if err != nil {
-			report(err)
-		}
+// nextQueuedTask returns the oldest request nobody has taken yet.
+func nextQueuedTask(opts peerOptions) (*queuedTask, error) {
+	if opts.inbox == "" || opts.logDir == "" {
+		return nil, nil
 	}
-	json.NewEncoder(conn).Encode(receipt)
+	root, err := os.OpenRoot(opts.inbox)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	dir, err := root.Open(".")
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	var next *queuedTask
+	var oldest time.Time
+	for _, entry := range entries {
+		id, ok := strings.CutSuffix(entry.Name(), ".local.json")
+		if !ok || !validReceiptID(id) || entry.Type() != 0 {
+			continue
+		}
+		if _, claimed, err := readMarker(root, id+".claimed.log"); err != nil || claimed {
+			continue
+		}
+		if _, canceled, err := readMarker(root, id+".cancel.log"); err != nil || canceled {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || (next != nil && !info.ModTime().Before(oldest)) {
+			continue
+		}
+		record, err := readInboxRecord(root, id)
+		if err != nil {
+			continue
+		}
+		if directory, err := projects.Resolve(opts.policy, record.ProjectID); err != nil || directory != record.Directory {
+			continue
+		}
+		next = &queuedTask{TaskID: id, Record: record}
+		oldest = info.ModTime()
+	}
+	return next, nil
 }
 
 func sendSubmission(conn io.ReadWriter, opts peerOptions) error {
@@ -285,7 +370,7 @@ func sendSubmission(conn io.ReadWriter, opts peerOptions) error {
 	}
 	var receipt taskReceipt
 	if err := json.NewDecoder(io.LimitReader(conn, 1024)).Decode(&receipt); err != nil || receipt.TaskID != receiptID(submission.RequestID) ||
-		!validReviewStatus(receipt.Status) {
+		!validTaskStatus(receipt.Status) {
 		return errors.New("task receipt unavailable; retry with the same request ID and prompt")
 	}
 	return json.NewEncoder(os.Stdout).Encode(receipt)

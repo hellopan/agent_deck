@@ -9,7 +9,6 @@ import (
 	"os"
 	"strings"
 
-	"github.com/hellopan/agent_deck/internal/codexprobe"
 	"github.com/hellopan/agent_deck/internal/projects"
 )
 
@@ -43,18 +42,9 @@ func loadReceipt(opts peerOptions, query receiptQuery) (taskReceipt, error) {
 	if record.ProjectID != query.ProjectID || record.Directory != dir {
 		return taskReceipt{}, errors.New("task receipt outside the authorized project")
 	}
-	status, err := reviewStatus(root, query.TaskID)
+	status, err := taskState(root, opts.logDir, record.ProjectID, dir, query.TaskID)
 	if err != nil {
 		return taskReceipt{}, err
-	}
-	if status == "claimed" && opts.logDir != "" {
-		terminal, err := codexprobe.FinalJournalStatus(opts.logDir, query.TaskID, query.ProjectID, dir)
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return taskReceipt{}, err
-		}
-		if terminal != "" {
-			status = terminal
-		}
 	}
 	return taskReceipt{TaskID: query.TaskID, Status: status}, nil
 }
@@ -88,12 +78,8 @@ func queryReceipt(conn io.ReadWriter, opts peerOptions) error {
 	}
 	var reply taskReceipt
 	if err := json.NewDecoder(io.LimitReader(conn, 1024)).Decode(&reply); err != nil || reply.TaskID != query.TaskID ||
-		(!validReviewStatus(reply.Status) && !codexprobe.IsFinalTaskStatus(reply.Status)) {
+		!validTaskStatus(reply.Status) {
 		return errors.New("remote task receipt unavailable")
 	}
 	return json.NewEncoder(os.Stdout).Encode(reply)
-}
-
-func validReviewStatus(status string) bool {
-	return status == "awaiting_local_review" || status == "claimed" || status == "declined"
 }

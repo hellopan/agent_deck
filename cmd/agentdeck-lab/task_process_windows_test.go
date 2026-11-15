@@ -3,10 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -59,36 +60,50 @@ func runCancellationFixture() int {
 	return 1
 }
 
-func TestLocalCancellationStopsAppServerAndFinishesJournal(t *testing.T) {
+func TestQueueRunnerStopsAppServerAndFinishesJournal(t *testing.T) {
 	t.Setenv("AGENTDECK_CANCEL_TEST_SERVER", "1")
 	project, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
-		t.Fatal(err)
-	}
-	logs := t.TempDir()
-	config := codexOptions{projectID: "alpha", policy: filepath.Join(project, "projects.json")}
-	data, err := json.Marshal(map[string][]projects.Entry{
-		"projects": {{ID: config.projectID, Directory: project, Enabled: true}},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(config.policy, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	resolved := codexprobe.Config{Executable: executable, ProjectDir: project, CodexHome: t.TempDir()}
-	const id = "abcdef0123456789abcdef0123456789"
+	policy := filepath.Join(project, "projects.json")
+	data, err := json.Marshal(map[string][]projects.Entry{
+		"projects": {{ID: "alpha", Directory: project, Enabled: true}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(policy, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	opts := peerOptions{
+		policy: policy, inbox: t.TempDir(), logDir: t.TempDir(),
+		codex: codexOptions{executable: executable, home: t.TempDir()},
+	}
+	submission := taskSubmission{RequestID: strings.Repeat("a", 32), ProjectID: "alpha", Prompt: "test"}
+	receipt, err := saveSubmission(opts, "", submission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := &agentRuntime{peer: opts, device: "a", logger: log.New(os.Stderr, "", 0)}
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
-	done := make(chan error, 1)
-	go func() { done <- runResolvedTask(ctx, resolved, config, "test", logs, id) }()
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		runtime.execute(ctx, &queuedTask{
+			TaskID: receipt.TaskID,
+			Record: inboxRecord{taskSubmission: submission, Directory: project},
+		})
+	}()
+	stopped := false
 	defer func() {
 		cancel()
-		if done != nil {
-			<-done
+		if !stopped {
+			<-finished
 		}
 	}()
 	var pid uint64
@@ -107,27 +122,27 @@ func TestLocalCancellationStopsAppServerAndFinishesJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer windows.CloseHandle(process)
-	if err := codexprobe.RequestCancellation(logs, id); err != nil {
+	if err := requestTaskCancel(opts, taskLogQuery{ProjectID: "alpha", TaskID: receipt.TaskID}); err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case err := <-done:
-		done = nil
-		if !errors.Is(err, errTaskCanceled) {
-			t.Fatalf("unexpected task result: %v", err)
-		}
+	case <-finished:
+		stopped = true
 	case <-ctx.Done():
-		t.Fatal("fixture did not stop after cancellation")
+		t.Fatal("runner did not stop after cancellation")
 	}
 	if state, err := windows.WaitForSingleObject(process, 0); err != nil || state != windows.WAIT_OBJECT_0 {
 		t.Fatalf("fixture process still running: state=%d err=%v", state, err)
 	}
-	page, err := codexprobe.ReadJournal(logs, id, config.projectID, project, 0)
+	page, err := codexprobe.ReadJournal(opts.logDir, receipt.TaskID, "alpha", project, 0)
 	if err != nil || len(page.Events) == 0 {
 		t.Fatalf("missing journal: %+v %v", page, err)
 	}
 	last := page.Events[len(page.Events)-1]
 	if last.Type != "task/finished" || last.Status != "interrupted" {
 		t.Fatalf("unexpected final journal event: %+v", last)
+	}
+	if status, err := loadReceipt(opts, receiptQuery{ProjectID: "alpha", TaskID: receipt.TaskID}); err != nil || status.Status != "interrupted" {
+		t.Fatalf("queue state after cancellation: %+v %v", status, err)
 	}
 }

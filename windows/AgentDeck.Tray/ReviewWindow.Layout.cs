@@ -8,7 +8,7 @@ internal sealed partial class ReviewWindow
     private readonly Label relayState = DeckTheme.Label("", DeckTheme.Body, DeckTheme.Muted);
     private readonly Label phoneHint = DeckTheme.Label("", DeckTheme.Body, DeckTheme.Muted);
     private readonly Label railState = DeckTheme.Label("", DeckTheme.Small);
-    private readonly Label inboxCount = DeckTheme.Label("待审核任务", DeckTheme.Body, DeckTheme.Muted);
+    private readonly Label inboxCount = DeckTheme.Label("任务队列", DeckTheme.Body, DeckTheme.Muted);
     private readonly Label logTitle = DeckTheme.Label("任务日志", DeckTheme.Section);
     private readonly TextBox logOutput = new()
     {
@@ -158,17 +158,16 @@ internal sealed partial class ReviewWindow
     {
         var body = Card();
         var actions = DeckTheme.Actions();
-        AddAction(actions, "刷新待办", RefreshInboxAsync, primary: true);
-        var preview = AddAction(actions, "查看任务", async () =>
+        AddAction(actions, "刷新队列", RefreshInboxAsync, primary: true);
+        var preview = AddAction(actions, "查看任务", () =>
         {
-            var selected = Selected();
-            detail.Text = FormatPreview(selected, await PreviewAsync(selected));
+            detail.Text = FormatPreview(Selected());
+            return Task.CompletedTask;
         });
-        var approve = AddAction(actions, "批准启动一次", () => ReviewAsync(true));
-        var decline = AddAction(actions, "拒绝任务", () => ReviewAsync(false));
+        var cancel = AddAction(actions, "叫停任务", CancelAsync);
         void UpdateSelection()
         {
-            preview.Enabled = approve.Enabled = decline.Enabled = pending.SelectedIndex >= 0;
+            preview.Enabled = cancel.Enabled = pending.SelectedIndex >= 0;
         }
         pending.SelectedIndexChanged += (_, _) => UpdateSelection();
         UpdateSelection();
@@ -187,7 +186,7 @@ internal sealed partial class ReviewWindow
         DeckTheme.Row(body, list, 35, fill: true);
         DeckTheme.Row(body, DeckTheme.Label("任务详情", DeckTheme.Body, DeckTheme.Muted), 34);
         DeckTheme.Row(body, DeckTheme.Reader(detail, "刷新待办后选择任务，即可查看请求内容。"), 65, fill: true);
-        return Page("任务审核", "查看发到这台电脑的任务请求，并在本机批准或拒绝。", body);
+        return Page("任务", "查看这台电脑的任务队列与执行状态；审批在手机上完成。", body);
     }
 
     private Control ProjectsPage()

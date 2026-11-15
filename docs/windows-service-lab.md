@@ -28,25 +28,21 @@
 
 ## 本地 Codex 任务与输出
 
-实验工具的 `codex-task` 从本机授权清单解析项目 ID，使用已配置的 Codex 账户运行一轮任务。先使用测试项目和专用 Codex home 准备一份 UTF-8 提示文件，例如内容为「只回复 AgentDeck OK」。从仓库重新编译实验工具后运行：
+任务由 Agent 自己消费，不需要在本机点批准。启动 Agent 时传入 `-task-inbox`、`-task-logs`、`-projects` 和 `-codex`，后台单线程按提交时间取出最旧的一条，写任务日志、跑一轮 Codex，结束时记录最终状态。手机提交后即开始执行，这正是「人离开电脑，Codex 继续干活」的前提。
 
-```powershell
-.\bin\agentdeck-lab.exe codex-task -codex 'C:\Tools\Codex\codex.exe' -projects 'C:\AgentDeckTest\projects.json' -project-id test-project -codex-home 'C:\AgentDeckTest\CodexHome' -prompt-file 'C:\AgentDeckTest\prompt.txt'
-```
-
-输出为逐行 JSON，包括当前轮次的回复增量、工具输出增量和结束状态。实验会话使用 Codex 的 `read-only` 沙箱和 `never` 审批策略。此处的只读模式用于本机测试，跨目录读取边界须按下文单独验证。若工具仍发来当前轮次的命令或文件变更审批，客户端以原请求 ID 回复拒绝或取消，并记录 `approval/declined`。未识别或不匹配当前轮次的交互请求会中止本轮。用户提交的单次批准仍待接入。 [OpenAI Codex App Server 文档](https://learn.chatgpt.com/docs/app-server)
+实验会话使用 Codex 的 `read-only` 沙箱和 `on-request` 审批策略：读操作在沙箱内直接放行，需要越界的命令执行与文件写入会挂起并等待已配对手机批准。批准只对那一次操作有效，不缓存、不继承；5 分钟无人处理按拒绝处理，本轮继续往下走。请求额外目录或网络权限会被直接拒绝，不会推到手机，因为那会把边界从「一次命令」放大成「整个会话」。 [OpenAI Codex App Server 文档](https://learn.chatgpt.com/docs/app-server)
 
 ### 补拉任务输出
 
-在 Windows Agent 所在电脑创建一个独立于项目的本机目录，赋予任务进程写入权限和 Agent 读取权限。运行 `codex-task` 时加上 `-task-logs 'C:\AgentDeckTest\TaskLogs'`，保存输出中的 `taskId`。启动同一台电脑的 Agent 或实验服务时，传入同样的 `-task-logs` 和 `-projects`。
+在 Windows Agent 所在电脑创建一个独立于项目的本机目录，赋予任务进程写入权限和 Agent 读取权限。启动 Agent 时用 `-task-logs 'C:\AgentDeckTest\TaskLogs'` 指定它。日志文件名就是回执里的 `taskId`，Agent 未配置日志目录时不消费队列。
 
 ```powershell
 .\bin\agentdeck-task-lab.exe task-log -config .\phone.json -device a -project-id test-project -task-id '<taskId>' -after 0
 ```
 
-保持同一设备、项目及任务 ID，下一次查询使用上一页的 `next` 值。末页可返回空数组，收到 `task/finished` 代表任务已经正常记录了最终状态。任务日志保存在电脑上。查询时重新检查项目授权，并验证项目 ID 与本机目录仍与此任务匹配。当前查询支持已知任务 ID，本机任务启动仍由 Windows 命令行发起。
+保持同一设备、项目及任务 ID，下一次查询使用上一页的 `next` 值。末页可返回空数组，收到 `task/finished` 代表任务已经正常记录了最终状态。任务日志保存在电脑上。查询时重新检查项目授权，并验证项目 ID 与本机目录仍与此任务匹配。任务由 Agent 队列启动，客户端只负责查询和决定。
 
-运行中的本机任务可通过托盘右键菜单「取消运行任务」，从本机日志目录选择对应任务日志并确认。菜单在审核窗口等待任务执行期间也可使用。也可以在 Agent 所在电脑运行 `agentdeck-task-lab.exe cancel-task -task-logs <日志绝对路径> -task-id <任务ID>`。请求由任务进程读取并取消 App Server，日志最终状态为 `interrupted`。如果任务在处理请求前已结束，以原结束状态为准。
+运行中的任务可通过托盘右键菜单「取消运行任务」，或在本机运行 `agentdeck-task-lab.exe cancel-task -task-inbox <收件箱绝对路径> -projects <清单> -project-id <项目> -task-id <任务ID> -task-logs <日志绝对路径>`。请求会同时写入收件箱与任务日志，Agent 读取后取消 App Server，日志最终状态为 `interrupted`；尚未开始的任务直接标记为 `canceled`，不会被执行。
 
 已配对的实验客户端可通过 Relay 发送取消请求。Windows Agent 需要使用新版程序，并配置原任务使用的 `-task-logs` 和 `-projects`。
 
@@ -71,27 +67,34 @@ $requestId = [Guid]::NewGuid().ToString('N')
 .\bin\agentdeck-task-lab.exe task-receipt -config .\phone.json -device a -project-id test-project -request-id $requestId
 ```
 
-查询返回 `awaiting_local_review`、`claimed` 或 `declined`。Agent 已配置任务日志且任务写入了最终事件时，也可直接返回 `completed`、`failed` 或 `interrupted`。`claimed` 表示已领取，目前尚无可用最终记录。回执不可用时，可用同一 ID 和原提示重试提交。回执中的 `taskId` 同时用于本机审核和日志补拉。
+查询返回 `queued`、`running`、`canceled`、`completed`、`failed` 或 `interrupted`。`queued` 表示已落盘等待 Agent 取走，`running` 表示正在执行。回执不可用时，可用同一 ID 和原提示重试提交。
+
+### 队列与审批
+
+已配对客户端可以读取任务队列，队列项包含项目、状态、提交时间、提示摘要与完整提示：
 
 ```powershell
-.\bin\agentdeck-task-lab.exe review-task -task-inbox 'C:\AgentDeckTest\Inbox' -receipt-id '<taskId>'
-.\bin\agentdeck-task-lab.exe review-task -task-inbox 'C:\AgentDeckTest\Inbox' -receipt-id '<taskId>' -accept-once -codex 'C:\Tools\Codex\codex.exe' -codex-home 'C:\AgentDeckTest\CodexHome' -projects 'C:\AgentDeckTest\projects.json' -project-id test-project -task-logs 'C:\AgentDeckTest\TaskLogs'
+.\bin\agentdeck-task-lab.exe queue -config .\phone.json -device a
 ```
 
-第一条命令展示任务供本机审核。第二条在重新核对项目权限后占用一次启动名额，并执行一轮只读任务。连接断开只影响客户端查询。若本机审核进程在占用名额后中断，重发同一请求仍返回 `claimed`，需先查看本机日志确认结果。这个确认针对任务启动，Codex 工具审批仍由当前只读策略处理。
-
-在 Agent 所在电脑列出待审核任务，或拒绝指定请求：
+Agent 侧也可以直接列出同一份队列，用于托盘与排障：
 
 ```powershell
-.\bin\agentdeck-task-lab.exe inbox -task-inbox 'C:\AgentDeckTest\Inbox'
-.\bin\agentdeck-task-lab.exe review-task -task-inbox 'C:\AgentDeckTest\Inbox' -receipt-id '<taskId>' -decline
+.\bin\agentdeck-task-lab.exe inbox -task-inbox 'C:\AgentDeckTest\Inbox' -projects 'C:\AgentDeckTest\projects.json' -task-logs 'C:\AgentDeckTest\TaskLogs'
 ```
 
-批准和拒绝使用同一个一次性标记。拒绝后任务从待办移除，客户端用原请求重试时收到 `declined`。
+当 Codex 需要一个越界操作时，Agent 会挂起并把请求推到手机。读取待批列表，然后决定：
+
+```powershell
+.\bin\agentdeck-task-lab.exe approvals -config .\phone.json -device a
+.\bin\agentdeck-task-lab.exe approve -config .\phone.json -device a -approval-id '<approvalId>' -decision accept
+```
+
+`approvals` 返回 `approvalId`、所属 `taskId`、`kind`（`command` 或 `file`）、`command`、`cwd`、`reason` 与 `secondsLeft`，以及当前运行中的任务。`approve` 只接受 `accept` 与 `decline`；同一条审批只能用一次，换一台手机、换一台电脑都无法决定同一条。
 
 ### Windows 托盘实验界面
 
-解压 `agentdeck-tray-windows.zip`，安装相应架构的 .NET 10 Desktop Runtime 后运行 `AgentDeck.Tray.exe`。保留包内文件在同一目录。窗口内填写本机收件箱、项目授权清单、日志目录、Codex 可执行文件和配置目录。刷新后可预览待办、批准启动一次只读任务或拒绝任务。「查看任务日志」可在窗口内读取所选任务日志末尾最多 256 KiB 的完整行。关闭窗口会隐藏到系统托盘，退出托盘不会停止单独运行的 Agent。
+解压 `agentdeck-tray-windows.zip`，安装相应架构的 .NET 10 Desktop Runtime 后运行 `AgentDeck.Tray.exe`。保留包内文件在同一目录。窗口内填写本机收件箱、项目授权清单、日志目录、Codex 可执行文件和配置目录。刷新后可查看任务队列、预览提示与状态、叫停任务。审批只在手机上完成，托盘不提供放行入口。「查看任务日志」可在窗口内读取所选任务日志末尾最多 256 KiB 的完整行。关闭窗口会隐藏到系统托盘，退出托盘不会停止单独运行的 Agent。
 
 这版界面用当前 Windows 用户调用同目录的实验工具。点击「保存路径」后，下次启动会从 `%LOCALAPPDATA%\AgentDeck\tray-settings.json` 加载本机路径。
 

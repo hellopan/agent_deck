@@ -1,39 +1,41 @@
 package approvals
 
 import (
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
 	"time"
 )
 
-func TestDecisionRequiresScopeAndCanBeConsumedOnlyOnce(t *testing.T) {
+func scopeFor(peer string) Scope {
+	return Scope{DeviceID: "a", PeerID: peer, ProjectID: "alpha", AdapterID: "codex", SessionID: "thread", RunID: "turn"}
+}
+
+func TestDecisionIsBoundToTheSubmittingPeerAndConsumedOnce(t *testing.T) {
 	var requests Pending
-	scope := Scope{DeviceID: "a", PeerID: "phone", ProjectID: "alpha", AdapterID: "codex", SessionID: "thread", RunID: "turn"}
-	id, result, err := requests.Open(scope, time.Now().Add(time.Minute), true)
+	scope := scopeFor("phone")
+	if _, _, err := requests.Open(Scope{DeviceID: "a"}, nil, time.Now().Add(time.Minute), true); err == nil {
+		t.Fatal("accepted an incomplete scope")
+	}
+	id, result, err := requests.Open(scope, json.RawMessage(`{"taskId":"t"}`), time.Now().Add(time.Minute), true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer requests.CloseRun(scope)
-	for _, mismatch := range []Scope{
-		{"b", "phone", "alpha", "codex", "thread", "turn"},
-		{"a", "other", "alpha", "codex", "thread", "turn"},
-		{"a", "phone", "beta", "codex", "thread", "turn"},
-		{"a", "phone", "alpha", "cursor", "thread", "turn"},
-		{"a", "phone", "alpha", "codex", "different", "turn"},
-		{"a", "phone", "alpha", "codex", "thread", "old"},
-	} {
-		if err := requests.Decide(mismatch, id, AcceptOnce); !errors.Is(err, ErrUnavailable) {
-			t.Fatalf("scope mismatch returned %v", err)
-		}
+	listed := requests.List()
+	if len(listed) != 1 || listed[0].ID != id || string(listed[0].Detail) != `{"taskId":"t"}` || !listed[0].AllowOnce {
+		t.Fatalf("listed=%+v", listed)
 	}
-	if err := requests.Decide(scope, id, Decision("acceptForSession")); !errors.Is(err, ErrDecision) {
+	if err := requests.Decide("other-phone", id, AcceptOnce); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("another phone decided: %v", err)
+	}
+	if err := requests.Decide("phone", id, Decision("acceptForSession")); !errors.Is(err, ErrDecision) {
 		t.Fatalf("session-wide approval returned %v", err)
 	}
 	outcomes := make(chan error, 2)
 	var contenders sync.WaitGroup
 	for range 2 {
-		contenders.Go(func() { outcomes <- requests.Decide(scope, id, AcceptOnce) })
+		contenders.Go(func() { outcomes <- requests.Decide("phone", id, AcceptOnce) })
 	}
 	contenders.Wait()
 	close(outcomes)
@@ -54,31 +56,32 @@ func TestDecisionRequiresScopeAndCanBeConsumedOnlyOnce(t *testing.T) {
 	if _, ok := <-result; ok {
 		t.Fatal("approval delivered twice")
 	}
+	if listed := requests.List(); len(listed) != 0 {
+		t.Fatalf("decided approval stayed listed: %+v", listed)
+	}
 }
 
-func TestExpiryAndClosingRun(t *testing.T) {
+func TestUnscopedApprovalAcceptsAnyAuthenticatedCaller(t *testing.T) {
 	var requests Pending
-	scope := Scope{DeviceID: "a", PeerID: "phone", ProjectID: "alpha", AdapterID: "codex", SessionID: "thread", RunID: "turn"}
-	expires := time.Now().Add(time.Minute)
-	id, result, err := requests.Open(scope, expires, false)
+	id, result, err := requests.Open(scopeFor(""), nil, time.Now().Add(time.Minute), true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := requests.Decide(scope, id, AcceptOnce); !errors.Is(err, ErrDecision) {
-		t.Fatalf("accepted an unsupported decision: %v", err)
+	if err := requests.Decide("any-paired-phone", id, Decline); err != nil {
+		t.Fatal(err)
 	}
-	requests.CloseRun(scope)
-	if _, ok := <-result; ok {
-		t.Fatal("ended turn received a decision")
+	if decision, ok := <-result; !ok || decision != Decline {
+		t.Fatalf("received %q, open=%v", decision, ok)
 	}
-	if err := requests.Decide(scope, id, Decline); !errors.Is(err, ErrUnavailable) {
-		t.Fatalf("ended turn still accepted a decision: %v", err)
-	}
-	id, result, err = requests.Open(scope, time.Now().Add(100*time.Millisecond), true)
+}
+
+func TestExpiryAndWithdrawalWakeTheWaiter(t *testing.T) {
+	var requests Pending
+	scope := scopeFor("phone")
+	id, result, err := requests.Open(scope, nil, time.Now().Add(50*time.Millisecond), true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer requests.CloseRun(scope)
 	select {
 	case _, ok := <-result:
 		if ok {
@@ -87,7 +90,17 @@ func TestExpiryAndClosingRun(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("expiry did not wake the waiter")
 	}
-	if err := requests.Decide(scope, id, AcceptOnce); !errors.Is(err, ErrUnavailable) {
+	if err := requests.Decide("phone", id, AcceptOnce); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("expired approval returned %v", err)
 	}
+
+	id, result, err = requests.Open(scope, nil, time.Now().Add(time.Minute), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requests.Close(id)
+	if _, ok := <-result; ok {
+		t.Fatal("withdrawn approval received a decision")
+	}
+	requests.Close(id)
 }

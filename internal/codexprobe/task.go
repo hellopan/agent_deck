@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 	"unicode/utf8"
 )
 
@@ -20,26 +19,29 @@ type TaskEvent struct {
 	Status   string `json:"status,omitempty"`
 }
 
-// RunReadOnlyTask starts one local diagnostic turn. The caller must resolve the
-// project on the host before invoking it. This is not a remote execution API.
-func RunReadOnlyTask(ctx context.Context, config Config, prompt string, emit func(TaskEvent) error) (string, error) {
-	if strings.TrimSpace(prompt) == "" || len(prompt) > 16*1024 || !utf8.ValidString(prompt) || emit == nil {
-		return "", errors.New("task requires a UTF-8 prompt of at most 16 KiB and an event handler")
+// RunReadOnlyTask starts one local turn under a read-only sandbox. Anything the
+// sandbox refuses is offered to decide before the turn continues, so the caller
+// owns both the authorization and the approval surface. This is not a remote
+// execution API.
+func RunReadOnlyTask(ctx context.Context, config Config, prompt string, emit func(TaskEvent) error, decide Decider) (string, error) {
+	if strings.TrimSpace(prompt) == "" || len(prompt) > 16*1024 || !utf8.ValidString(prompt) || emit == nil || decide == nil {
+		return "", errors.New("task requires a UTF-8 prompt of at most 16 KiB, an event handler and an approval decider")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-	defer cancel()
 	var status string
 	err := withAppServer(ctx, config, func(writer *json.Encoder, reader *bufio.Scanner) error {
 		var err error
-		status, err = runReadOnlyTurn(ctx, config.ProjectDir, prompt, writer, reader, emit)
+		status, err = runTurn(ctx, config.ProjectDir, prompt, writer, reader, emit, decide)
 		return err
 	})
 	return status, err
 }
 
-func runReadOnlyTurn(ctx context.Context, directory, prompt string, writer *json.Encoder, reader *bufio.Scanner, emit func(TaskEvent) error) (string, error) {
+func runTurn(ctx context.Context, directory, prompt string, writer *json.Encoder, reader *bufio.Scanner, emit func(TaskEvent) error, decide Decider) (string, error) {
+	// "on-request" keeps reads inside the sandbox while letting the model ask
+	// for a single escalation. "never" would silently refuse every write and
+	// leave the phone nothing to answer.
 	start := message{Method: "thread/start", ID: 2, Params: map[string]any{
-		"cwd": directory, "sandbox": "read-only", "approvalPolicy": "never", "ephemeral": true,
+		"cwd": directory, "sandbox": "read-only", "approvalPolicy": "on-request", "ephemeral": true,
 	}}
 	if err := writer.Encode(start); err != nil {
 		return "", err
@@ -75,14 +77,7 @@ func runReadOnlyTurn(ctx context.Context, directory, prompt string, writer *json
 			return "", errors.New("invalid Codex task message")
 		}
 		if packet.Method != "" && len(packet.ID) > 0 {
-			reply, err := declineApproval(packet.Method, packet.ID, packet.Params.approvalRequest, threadID, turnID)
-			if err != nil {
-				return "", fmt.Errorf("Codex requested interactive input during the read-only task: %w", err)
-			}
-			if err := writer.Encode(reply); err != nil {
-				return "", err
-			}
-			if err := emit(TaskEvent{Type: "approval/declined", ThreadID: threadID, TurnID: turnID, Status: reply.Result.Decision}); err != nil {
+			if err := serveApproval(ctx, packet.Method, packet.ID, packet.Params.approvalRequest, threadID, turnID, writer, emit, decide); err != nil {
 				return "", err
 			}
 			continue
@@ -133,4 +128,34 @@ func runReadOnlyTurn(ctx context.Context, directory, prompt string, writer *json
 		return "", fmt.Errorf("read Codex task output: %w", err)
 	}
 	return "", errors.New("Codex disconnected before the task finished")
+}
+
+// serveApproval answers one tool request. The decision is single-use and never
+// cached, so the next request asks again.
+func serveApproval(ctx context.Context, method string, id json.RawMessage, request approvalRequest, threadID, turnID string, writer *json.Encoder, emit func(TaskEvent) error, decide Decider) error {
+	approval, err := describeApproval(method, id, request, threadID, turnID)
+	if err != nil {
+		return fmt.Errorf("Codex requested interactive input during the task: %w", err)
+	}
+	if !approval.NeedsDecision() {
+		if err := writer.Encode(permissionsReply(id)); err != nil {
+			return err
+		}
+		return emit(TaskEvent{Type: "approval/declined", ThreadID: threadID, TurnID: turnID, Text: approval.Summary(), Status: decisionWord(false)})
+	}
+	if err := emit(TaskEvent{Type: "approval/requested", ThreadID: threadID, TurnID: turnID, Text: approval.Summary()}); err != nil {
+		return err
+	}
+	approved, err := decide(ctx, approval)
+	if err != nil {
+		return err
+	}
+	if err := writer.Encode(approvalDecision(id, approved)); err != nil {
+		return err
+	}
+	event := "approval/declined"
+	if approved {
+		event = "approval/approved"
+	}
+	return emit(TaskEvent{Type: event, ThreadID: threadID, TurnID: turnID, Text: approval.Summary(), Status: decisionWord(approved)})
 }
