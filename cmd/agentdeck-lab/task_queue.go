@@ -304,8 +304,9 @@ func (a *agentRuntime) execute(ctx context.Context, task *queuedTask) {
 	defer a.setRunning(nil)
 	a.logger.Printf("task %s started in %s", shortID(task.TaskID), task.Record.ProjectID)
 
+	var threadID string
 	status, runErr := runWhileAuthorized(ctx, policy, resolved.ProjectDir, func(runCtx context.Context, check func() error) (string, error) {
-		return codexprobe.RunReadOnlyTask(runCtx, resolved, task.Record.Prompt, func(event codexprobe.TaskEvent) error {
+		run, err := codexprobe.RunReadOnlyTask(runCtx, resolved, task.Record.ThreadID, task.Record.Prompt, func(event codexprobe.TaskEvent) error {
 			if err := check(); err != nil {
 				return err
 			}
@@ -313,6 +314,15 @@ func (a *agentRuntime) execute(ctx context.Context, task *queuedTask) {
 		}, func(runCtx context.Context, approval codexprobe.Approval) (bool, error) {
 			return a.awaitDecision(runCtx, task, approval)
 		})
+		if run.ThreadID != "" && run.ThreadID != task.Record.ThreadID {
+			threadID = run.ThreadID
+			// Remember the conversation before the journal closes, so the phone
+			// can offer a follow-up even if this turn failed.
+			if err := writeThreadMarker(root, task.TaskID, task.Record.ProjectID, run.ThreadID); err != nil {
+				a.logger.Printf("task %s conversation marker: %v", shortID(task.TaskID), err)
+			}
+		}
+		return run.Status, err
 	}, func() (bool, error) {
 		// A queued request is stopped by the inbox marker, a running one by the
 		// journal marker; a remote cancellation writes both.
@@ -330,6 +340,17 @@ func (a *agentRuntime) execute(ctx context.Context, task *queuedTask) {
 		if ctx.Err() != nil {
 			status = "interrupted"
 		}
+	}
+	if errors.Is(runErr, codexprobe.ErrThreadUnavailable) {
+		// Tell the phone why the follow-up could not run: a new thread here
+		// would answer a question the model never saw.
+		if err := journal.Append(codexprobe.TaskEvent{
+			Type: "task/notice", ThreadID: threadID,
+			Text: "上一轮会话已经无法续接，这一句没有执行。重新提交一个任务会开新会话。",
+		}); err != nil {
+			a.logger.Printf("task %s notice: %v", shortID(task.TaskID), err)
+		}
+		a.logger.Printf("task %s conversation unavailable: %v", shortID(task.TaskID), runErr)
 	}
 	if err := journal.Finish(status); err != nil {
 		a.logger.Printf("task %s final status: %v", shortID(task.TaskID), err)

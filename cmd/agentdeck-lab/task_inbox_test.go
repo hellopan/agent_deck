@@ -192,3 +192,57 @@ func TestSubmissionMarkerHasOneWinner(t *testing.T) {
 		t.Fatalf("missing marker: %v %v", claimed, err)
 	}
 }
+
+func TestContinuationRequiresAKnownThread(t *testing.T) {
+	opts, _ := queueFixture(t)
+	const thread = "01a1e02e-b9a6-74c3-9462-b22f77b5cee0"
+	first, err := saveSubmission(opts, "phone", taskSubmission{
+		RequestID: strings.Repeat("d", 32), ProjectID: "alpha", Prompt: "把测试跑一遍",
+	})
+	if err != nil || first.Status != statusQueued {
+		t.Fatalf("first turn: %+v %v", first, err)
+	}
+	follow := taskSubmission{
+		RequestID: strings.Repeat("e", 32), ProjectID: "alpha", Prompt: "失败的那两个再看一下", ThreadID: thread,
+	}
+	if _, err := saveSubmission(opts, "phone", follow); err == nil {
+		t.Fatal("accepted a conversation the Agent never started")
+	}
+
+	root, err := os.OpenRoot(opts.inbox)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if err := writeThreadMarker(root, first.TaskID, "alpha", thread); err != nil {
+		t.Fatal(err)
+	}
+	second, err := saveSubmission(opts, "phone", follow)
+	if err != nil || second.Status != statusQueued {
+		t.Fatalf("follow-up: %+v %v", second, err)
+	}
+
+	items, err := listQueue(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range items {
+		if item.ThreadID != thread {
+			t.Fatalf("item %s lost its conversation: %+v", item.TaskID, item)
+		}
+	}
+	if len(items) != 2 {
+		t.Fatalf("queue: %+v", items)
+	}
+
+	// A marker from another project must not authorize the same thread here.
+	if err := writeThreadMarker(root, strings.Repeat("f", 32), "beta", thread); err != nil {
+		t.Fatal(err)
+	}
+	other := follow
+	other.RequestID = strings.Repeat("a", 31) + "1"
+	other.ThreadID = "01a1e031-bf6d-7952-8a66-b90e94af20aa"
+	if _, err := saveSubmission(opts, "phone", other); err == nil {
+		t.Fatal("accepted a conversation that belongs to no stored turn")
+	}
+}

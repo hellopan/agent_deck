@@ -64,6 +64,17 @@ class GalleryActivity : ComponentActivity() {
                             onCancel = {},
                             preview = sampleTrace,
                         )
+                        "follow" -> TraceScreen(
+                            desk = desk,
+                            item = sampleQueue.first { it.status == "completed" },
+                            taskId = "1a2b3c4d5e6f708192a3b4c5d6e7f809",
+                            projectId = "web-app",
+                            onBack = {},
+                            onCancel = {},
+                            preview = sampleTrace + TraceEvent(
+                                "task/finished", "", "completed", System.currentTimeMillis(),
+                            ),
+                        )
                         "connect" -> ConnectScreen(desk, {}, {}, {})
                         "submit" -> {
                             TaskListScreen(desk, {}, {}, {}, {})
@@ -112,6 +123,7 @@ private val sampleQueue = listOf(
         submittedAt = System.currentTimeMillis() - 8 * MINUTE,
         summary = "补全 src/user 下 5 个模块的单元测试",
         prompt = "补全 src/user 下 5 个模块的单元测试",
+        threadId = "",
     ),
     QueueItem(
         taskId = "7c1e04b26a5d4f8e9b0c1d2e3f405162",
@@ -120,6 +132,7 @@ private val sampleQueue = listOf(
         submittedAt = System.currentTimeMillis() - 12 * MINUTE,
         summary = "排查限流中间件的并发问题",
         prompt = "排查限流中间件的并发问题，复现后给出最小修复",
+        threadId = "01a1e02e-b9a6-74c3-9462-b22f77b5cee0",
     ),
     QueueItem(
         taskId = "1a2b3c4d5e6f708192a3b4c5d6e7f809",
@@ -128,6 +141,7 @@ private val sampleQueue = listOf(
         submittedAt = System.currentTimeMillis() - 53 * MINUTE,
         summary = "pnpm lint --fix",
         prompt = "pnpm lint --fix",
+        threadId = "01a1e02e-b9a6-74c3-9462-b22f77b5cee0",
     ),
     QueueItem(
         taskId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
@@ -136,6 +150,7 @@ private val sampleQueue = listOf(
         submittedAt = System.currentTimeMillis() - 131 * MINUTE,
         summary = "git push origin feat/ui",
         prompt = "git push origin feat/ui",
+        threadId = "",
     ),
 )
 

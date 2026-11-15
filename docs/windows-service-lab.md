@@ -92,6 +92,22 @@ Agent 侧也可以直接列出同一份队列，用于托盘与排障：
 
 `approvals` 返回 `approvalId`、所属 `taskId`、`kind`（`command` 或 `file`）、`command`、`cwd`、`reason` 与 `secondsLeft`，以及当前运行中的任务。`approve` 只接受 `accept` 与 `decline`；同一条审批只能用一次，换一台手机、换一台电脑都无法决定同一条。
 
+### 会话与续轮
+
+一个任务是一轮对话，不是一次独立请求。首轮由 Agent 执行 `thread/start` 拿到 thread id，落盘成收件箱里的 `<taskId>.thread.json`，`queue` 会把 `threadId` 一并返回。想接着说，就用同一个 `threadId` 再提交一次：
+
+```powershell
+.\bin\agentdeck-task-lab.exe submit -config .\phone.json -device a -project-id test-project -request-id $requestId -thread-id '01a1e02e-b9a6-74c3-9462-b22f77b5cee0' -prompt-file 'C:\AgentDeckTest\prompt.txt'
+```
+
+带 `threadId` 的提交走 `thread/resume`，模型保留前面每一轮的内容。三条硬约束，都来自对 Codex 0.167.0-alpha.3.2 的实测：
+
+- 首轮必须 `ephemeral: false`。临时线程不写 rollout，之后 `thread/resume` 返回 `no rollout found`，这轮对话就断了。
+- rollout 在第一个 turn 真正运行时才创建。只有 `thread/start`、没跑过 turn 的线程续不上。
+- 续接只能指向本 Agent 在同一项目里建过的会话，提交时按收件箱里的 `*.thread.json` 核对，对不上直接拒绝，避免手机要求电脑去读任意线程。
+
+续不上时任务状态是 `failed`，轨迹里会多一条 `task/notice` 说明原因。Agent 不会悄悄开一个新会话替你把话说完——那样模型不知道上文，答非所问还看不出来。
+
 ### Windows 托盘实验界面
 
 解压 `agentdeck-tray-windows.zip`，安装相应架构的 .NET 10 Desktop Runtime 后运行 `AgentDeck.Tray.exe`。保留包内文件在同一目录。窗口内填写本机收件箱、项目授权清单、日志目录、Codex 可执行文件和配置目录。刷新后可查看任务队列、预览提示与状态、叫停任务。审批只在手机上完成，托盘不提供放行入口。「查看任务日志」可在窗口内读取所选任务日志末尾最多 256 KiB 的完整行。关闭窗口会隐藏到系统托盘，退出托盘不会停止单独运行的 Agent。

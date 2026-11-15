@@ -12,6 +12,8 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -32,7 +35,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -60,6 +65,8 @@ internal fun TraceScreen(
     var ended by remember { mutableStateOf(item?.finished == true) }
     var problem by remember { mutableStateOf<String?>(null) }
     var askCancel by remember { mutableStateOf(false) }
+    var follow by remember { mutableStateOf("") }
+    var sentNote by remember { mutableStateOf<String?>(null) }
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     val listState = rememberLazyListState()
 
@@ -184,12 +191,71 @@ internal fun TraceScreen(
                     }
                 }
             }
-            if (!ended) {
-                Column(Modifier.padding(top = 10.dp, bottom = 26.dp)) {
+            val threadId = item?.threadId.orEmpty()
+            when {
+                !ended -> Column(Modifier.padding(top = 10.dp, bottom = 26.dp)) {
                     PButton("叫停任务", kind = ButtonKind.Danger, enabled = !desk.busy, onClick = { askCancel = true })
                 }
-            } else {
-                Spacer(Modifier.height(26.dp))
+                threadId.isNotEmpty() -> Column(
+                    Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 8.dp)
+                        .navigationBarsPadding().imePadding(),
+                ) {
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(Tok.Line))
+                    Spacer(Modifier.height(11.dp))
+                    BasicTextField(
+                        value = follow,
+                        onValueChange = { if (it.toByteArray(Charsets.UTF_8).size <= 4096) follow = it },
+                        textStyle = TextStyle(color = Tok.Tx, fontSize = 12.5.sp, fontFamily = Tok.Mono, lineHeight = 19.sp),
+                        cursorBrush = SolidColor(Tok.Amber),
+                        modifier = Modifier.fillMaxWidth().height(72.dp).clip(RoundedCornerShape(8.dp))
+                            .background(Tok.Code).border(1.dp, Tok.Line, RoundedCornerShape(8.dp)).padding(11.dp),
+                        decorationBox = { inner ->
+                            Box {
+                                if (follow.isEmpty()) {
+                                    Text(
+                                        "接着说…例如「刚才那个方案按第二点改」",
+                                        color = Tok.Tx3,
+                                        fontSize = 11.5.sp,
+                                        lineHeight = 17.sp,
+                                    )
+                                }
+                                inner()
+                            }
+                        },
+                    )
+                    Spacer(Modifier.height(9.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            sentNote ?: "接在同一轮会话里，模型记得上面说过什么",
+                            color = if (sentNote != null) Tok.Green else Tok.Tx3,
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Box(Modifier.width(104.dp)) {
+                            PButton(
+                                if (desk.busy) "发送中…" else "接着说",
+                                kind = ButtonKind.Primary,
+                                enabled = !desk.busy && follow.isNotBlank(),
+                                onClick = {
+                                    desk.followUp(threadId, follow) {
+                                        follow = ""
+                                        sentNote = "已发出，返回列表能看到新的一轮"
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+                else -> Column(Modifier.padding(top = 12.dp, bottom = 26.dp)) {
+                    Text(
+                        "这一轮没有建立会话，接不下去。重新提交会开新会话。",
+                        color = Tok.Tx3,
+                        fontSize = 10.5.sp,
+                        lineHeight = 15.sp,
+                    )
+                }
             }
         }
         if (askCancel) AlertDialog(
@@ -269,6 +335,7 @@ private fun describe(event: TraceEvent): Pair<String, Color> = when (event.type)
     "approval/approved" -> "已在手机上批准" to Tok.Green
     "approval/declined" -> "已在手机上拒绝" to Tok.Red
     "turn/completed" -> "本轮结束 · " + event.status to if (event.status == "completed") Tok.Green else Tok.Red
+    "task/notice" -> "提示" to Tok.Amber
     "task/finished" -> "任务结束 · " + event.status to if (event.status == "completed") Tok.Green else Tok.Red
     "item/agentMessage/delta" -> "Codex" to Tok.Tx
     "item/commandExecution/outputDelta" -> "命令输出" to Tok.Tx3

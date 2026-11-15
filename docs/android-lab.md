@@ -36,7 +36,7 @@ export AGENTDECK_ENROLLMENT_TOKEN="$(cat enrollment-token)"
 |---|---|---|
 | 任务 | 设备切换、待处理 / 运行中 / 已完成分段、审批与队列卡片 | `agentdeck-approvals-v1`、`agentdeck-queue-v1` |
 | 审批 | 风险条、完整命令与工作目录、2×3 事实、有效期条、影响范围、拒绝 / 允许一次 | `agentdeck-approve-v1` |
-| 执行轨迹 | 实时事件流（消息 / 命令 / 审批 / 结束四类着色）、跟随开关、叫停 | `agentdeck-task-log-v1` |
+| 执行轨迹 | 实时事件流（消息 / 命令 / 审批 / 结束四类着色）、跟随开关、叫停；结束后底部变成「接着说」输入条 | `agentdeck-task-log-v1`、`agentdeck-task-submit-v1` |
 | 连接 | 连通状态与延迟、计算机名、设备 ID、手机指纹、切换与重新配对 | `agentdeck-pair-v1`、`agentdeck-projects-v1` |
 
 约定：
@@ -44,6 +44,7 @@ export AGENTDECK_ENROLLMENT_TOKEN="$(cat enrollment-token)"
 - 列表与审批每 2~3 秒轮询一次（有未决审批时用 2 秒），轨迹页按游标每 2 秒补拉，断线重连后从 `after` 继续。
 - 「允许一次」先要求系统锁屏验证（`createConfirmDeviceCredentialIntent`）。设备没设锁屏时弹窗说明风险，要求显式确认后才放行。
 - 调试构建不加 `FLAG_SECURE`，可以直接截图；release 构建加，防止录屏。
+- 一轮结束后，轨迹页底部的按钮换成输入条。发出去的这句带上这一轮的 `threadId`，电脑走 `thread/resume` 续在同一个会话里；「接着说」是新一轮、新任务卡片，但共用同一段对话。没有 `threadId`（首轮根本没跑起来）时不给输入框，只说明这轮接不下去。
 
 `design/phone/` 下是这四块的真机分辨率截图（1080×2400，模拟器 Android 15）。
 
@@ -52,7 +53,7 @@ export AGENTDECK_ENROLLMENT_TOKEN="$(cat enrollment-token)"
 `android/app/src/debug/` 里有一个只在 debug 构建存在的 `GalleryActivity`，用固定样本数据渲染上面四屏，不需要电脑在线：
 
 ```sh
-adb shell am start -n com.agentdeck.lab/.GalleryActivity --es screen tasks   # tasks | approval | trace | submit | connect
+adb shell am start -n com.agentdeck.lab/.GalleryActivity --es screen tasks   # tasks | approval | trace | follow | submit | connect
 ```
 
 修改界面后先在这里对一遍 `design/ui-v2.html`，再上真机联调。样本数据在 `GalleryActivity.kt` 底部，改文案或补字段时同步改它。

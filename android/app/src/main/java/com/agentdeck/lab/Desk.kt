@@ -162,6 +162,25 @@ internal class Desk(private val store: LabState, private val scope: CoroutineSco
         sync(silent = true)
     }
 
+    /** Continues a conversation the phone already owns. The Agent rejects a
+     *  thread it never started, so a stale screen fails loudly instead of
+     *  silently starting over. */
+    fun followUp(threadId: String, prompt: String, onSent: () -> Unit = {}) = busyAction("正在发送…") {
+        val api = api() ?: error("还没有配对")
+        require(project.isNotEmpty()) { "请选择项目" }
+        val body = prompt.trim()
+        require(body.isNotEmpty()) { "要说点什么" }
+        require(body.toByteArray(Charsets.UTF_8).size <= 4096) { "超过 4 KB" }
+        require(threadId.isNotEmpty()) { "这一轮没有建立会话" }
+        val id = withContext(Dispatchers.IO) {
+            api.submit(project, UUID.randomUUID().toString().replace("-", ""), body, threadId)
+        }
+        submitted += 1
+        notice = "已接在同一个会话 · " + shortId(id)
+        onSent()
+        sync(silent = true)
+    }
+
     fun cancel(taskId: String, projectId: String) = busyAction("正在叫停…") {
         val api = api() ?: error("还没有配对")
         withContext(Dispatchers.IO) { api.cancel(projectId.ifEmpty { project }, taskId) }

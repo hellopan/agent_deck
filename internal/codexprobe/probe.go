@@ -36,7 +36,8 @@ type response struct {
 	Method string          `json:"method"`
 	Result json.RawMessage `json:"result"`
 	Error  *struct {
-		Code int `json:"code"`
+		Code    int    `json:"code"`
+		Message string `json:"message"`
 	} `json:"error"`
 }
 
@@ -143,6 +144,9 @@ func readResponse(ctx context.Context, reader *bufio.Scanner, request message) (
 			continue
 		}
 		if reply.Error != nil {
+			if reply.Error.Message != "" {
+				return nil, fmt.Errorf("Codex %s returned error code %d: %s", request.Method, reply.Error.Code, reply.Error.Message)
+			}
 			return nil, fmt.Errorf("Codex %s returned error code %d", request.Method, reply.Error.Code)
 		}
 		if len(reply.Result) == 0 || string(reply.Result) == "null" {

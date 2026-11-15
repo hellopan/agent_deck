@@ -40,6 +40,9 @@ type taskSubmission struct {
 	RequestID string `json:"requestId"`
 	ProjectID string `json:"projectId"`
 	Prompt    string `json:"prompt"`
+	// ThreadID continues an existing conversation. An empty value starts a new
+	// one, which is why the receipt for a first turn cannot carry it.
+	ThreadID string `json:"threadId,omitempty"`
 }
 
 type taskReceipt struct {
@@ -64,6 +67,9 @@ type queueItem struct {
 	Submitted time.Time `json:"submittedAt"`
 	Summary   string    `json:"summary"`
 	Prompt    string    `json:"prompt"`
+	// ThreadID is the conversation this turn belongs to. It is empty until a
+	// first turn has actually run, because only Codex can name the thread.
+	ThreadID string `json:"threadId,omitempty"`
 }
 
 type queuedTask struct {
@@ -75,11 +81,13 @@ func addSubmitOptions(flags *flag.FlagSet, opts *peerOptions) {
 	flags.StringVar(&opts.inbox, "task-inbox", "", "absolute local task inbox directory (agent only)")
 	flags.StringVar(&opts.submission.RequestID, "request-id", "", "stable 32-character lowercase hex ID")
 	flags.StringVar(&opts.promptPath, "prompt-file", "", "local UTF-8 task prompt file (submit only)")
+	flags.StringVar(&opts.submission.ThreadID, "thread-id", "", "conversation to continue; omit to start a new one")
 }
 
 func validSubmission(s taskSubmission) bool {
 	return validReceiptID(s.RequestID) &&
-		strings.TrimSpace(s.Prompt) != "" && len(s.Prompt) <= 4096 && utf8.ValidString(s.Prompt)
+		strings.TrimSpace(s.Prompt) != "" && len(s.Prompt) <= 4096 && utf8.ValidString(s.Prompt) &&
+		(s.ThreadID == "" || codexprobe.ValidThreadID(s.ThreadID))
 }
 
 func validTaskStatus(status string) bool {
@@ -107,6 +115,9 @@ func saveSubmission(opts peerOptions, peerID string, submission taskSubmission) 
 		return taskReceipt{}, err
 	}
 	defer root.Close()
+	if submission.ThreadID != "" && !knownThread(root, submission.ProjectID, submission.ThreadID) {
+		return taskReceipt{}, errors.New("the conversation does not belong to an earlier turn in this project")
+	}
 	name := taskID + ".local.json"
 	err = publishSubmission(root, name, data)
 	if errors.Is(err, os.ErrExist) {
@@ -189,6 +200,73 @@ func writeMarker(root *os.Root, name string) error {
 		return nil
 	}
 	return err
+}
+
+// threadMarker records the conversation a turn ran in. A submission record is
+// published once and never rewritten, and the thread id is only known after
+// Codex answers, so the id lives in its own file.
+type threadMarker struct {
+	ThreadID  string `json:"threadId"`
+	ProjectID string `json:"projectId"`
+}
+
+func writeThreadMarker(root *os.Root, id, projectID, threadID string) error {
+	if !codexprobe.ValidThreadID(threadID) || projectID == "" {
+		return errors.New("invalid conversation marker")
+	}
+	data, err := json.Marshal(threadMarker{ThreadID: threadID, ProjectID: projectID})
+	if err != nil {
+		return err
+	}
+	err = publishSubmission(root, id+".thread.json", data)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	return err
+}
+
+func readThreadMarker(root *os.Root, id string) (threadMarker, bool, error) {
+	var mark threadMarker
+	file, err := root.Open(id + ".thread.json")
+	if errors.Is(err, os.ErrNotExist) {
+		return mark, false, nil
+	}
+	if err != nil {
+		return mark, false, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, 1024))
+	if err := errors.Join(readErr, file.Close()); err != nil {
+		return mark, false, err
+	}
+	if json.Unmarshal(data, &mark) != nil || !codexprobe.ValidThreadID(mark.ThreadID) || mark.ProjectID == "" {
+		return threadMarker{}, false, nil
+	}
+	return mark, true, nil
+}
+
+// knownThread proves a continuation targets a conversation this Agent started in
+// the same project, so a phone cannot ask it to resume an arbitrary thread.
+func knownThread(root *os.Root, projectID, threadID string) bool {
+	dir, err := root.Open(".")
+	if err != nil {
+		return false
+	}
+	defer dir.Close()
+	entries, err := dir.ReadDir(-1)
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		id, ok := strings.CutSuffix(entry.Name(), ".thread.json")
+		if !ok || !validReceiptID(id) {
+			continue
+		}
+		if mark, ok, err := readThreadMarker(root, id); err == nil && ok &&
+			mark.ProjectID == projectID && mark.ThreadID == threadID {
+			return true
+		}
+	}
+	return false
 }
 
 func publishSubmission(root *os.Root, name string, data []byte) error {
@@ -288,9 +366,18 @@ func listQueue(opts peerOptions) ([]queueItem, error) {
 		if err != nil {
 			return nil, err
 		}
+		threadID := record.ThreadID
+		if threadID == "" {
+			if mark, ok, err := readThreadMarker(root, id); err != nil {
+				return nil, err
+			} else if ok {
+				threadID = mark.ThreadID
+			}
+		}
 		items = append(items, queueItem{
 			TaskID: id, ProjectID: record.ProjectID, Directory: record.Directory,
-			Status: status, Submitted: info.ModTime().UTC(), Summary: promptSummary(record.Prompt), Prompt: record.Prompt,
+			Status: status, Submitted: info.ModTime().UTC(), Summary: promptSummary(record.Prompt),
+			Prompt: record.Prompt, ThreadID: threadID,
 		})
 	}
 	sort.Slice(items, func(a, b int) bool {

@@ -11,6 +11,7 @@ internal data class QueueItem(
     val submittedAt: Long?,
     val summary: String,
     val prompt: String,
+    val threadId: String,
 ) {
     val running: Boolean get() = status == "running"
     val finished: Boolean get() = status == "completed" || status == "failed" ||
@@ -76,6 +77,7 @@ internal class AgentApi(config: JSONObject, private val device: String, private 
                 submittedAt = parseTime(item.optString("submittedAt")),
                 summary = item.optString("summary"),
                 prompt = item.optString("prompt"),
+                threadId = item.optString("threadId"),
             )
         }.filter { it.taskId.isNotEmpty() }
     }
@@ -117,9 +119,13 @@ internal class AgentApi(config: JSONObject, private val device: String, private 
         }
     }
 
-    fun submit(projectId: String, requestId: String, prompt: String): String {
-        val reply = JSONObject(call("agentdeck-task-submit-v1", JSONObject()
-            .put("projectId", projectId).put("requestId", requestId).put("prompt", prompt)))
+    fun submit(projectId: String, requestId: String, prompt: String, threadId: String = ""): String {
+        val payload = JSONObject()
+            .put("projectId", projectId).put("requestId", requestId).put("prompt", prompt)
+        // An empty threadId asks for a new conversation; the Agent only accepts a
+        // thread that one of its own earlier turns created.
+        if (threadId.isNotEmpty()) payload.put("threadId", threadId)
+        val reply = JSONObject(call("agentdeck-task-submit-v1", payload))
         val id = reply.optString("taskId")
         require(id.matches(Regex("[a-f0-9]{32}"))) { "电脑没有返回任务回执" }
         return id

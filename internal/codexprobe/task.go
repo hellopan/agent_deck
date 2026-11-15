@@ -20,35 +20,84 @@ type TaskEvent struct {
 	At       string `json:"at,omitempty"`
 }
 
-// RunReadOnlyTask starts one local turn under a read-only sandbox. Anything the
-// sandbox refuses is offered to decide before the turn continues, so the caller
-// owns both the authorization and the approval surface. This is not a remote
-// execution API.
-func RunReadOnlyTask(ctx context.Context, config Config, prompt string, emit func(TaskEvent) error, decide Decider) (string, error) {
-	if strings.TrimSpace(prompt) == "" || len(prompt) > 16*1024 || !utf8.ValidString(prompt) || emit == nil || decide == nil {
-		return "", errors.New("task requires a UTF-8 prompt of at most 16 KiB, an event handler and an approval decider")
-	}
-	var status string
-	err := withAppServer(ctx, config, func(writer *json.Encoder, reader *bufio.Scanner) error {
-		var err error
-		status, err = runTurn(ctx, config.ProjectDir, prompt, writer, reader, emit, decide)
-		return err
-	})
-	return status, err
+// TaskRun is one turn and the conversation it ran in. The caller stores ThreadID
+// so a later turn can resume the same conversation instead of starting over.
+type TaskRun struct {
+	Status   string
+	ThreadID string
+	TurnID   string
 }
 
-func runTurn(ctx context.Context, directory, prompt string, writer *json.Encoder, reader *bufio.Scanner, emit func(TaskEvent) error, decide Decider) (string, error) {
-	// "on-request" keeps reads inside the sandbox while letting the model ask
-	// for a single escalation. "never" would silently refuse every write and
-	// leave the phone nothing to answer.
-	start := message{Method: "thread/start", ID: 2, Params: map[string]any{
-		"cwd": directory, "sandbox": "read-only", "approvalPolicy": "on-request", "ephemeral": true,
-	}}
-	if err := writer.Encode(start); err != nil {
+// ErrThreadUnavailable reports a conversation that cannot be resumed. The turn
+// fails rather than silently starting a new thread, because a fresh thread would
+// lose the context the follow-up depends on.
+var ErrThreadUnavailable = errors.New("the conversation can no longer be resumed")
+
+// RunReadOnlyTask runs one local turn under a read-only sandbox. An empty
+// threadID starts a new conversation; a non-empty one resumes it, so the model
+// keeps everything said in earlier turns. Anything the sandbox refuses is
+// offered to decide before the turn continues, so the caller owns both the
+// authorization and the approval surface. This is not a remote execution API.
+func RunReadOnlyTask(ctx context.Context, config Config, threadID, prompt string, emit func(TaskEvent) error, decide Decider) (TaskRun, error) {
+	if strings.TrimSpace(prompt) == "" || len(prompt) > 16*1024 || !utf8.ValidString(prompt) || emit == nil || decide == nil {
+		return TaskRun{}, errors.New("task requires a UTF-8 prompt of at most 16 KiB, an event handler and an approval decider")
+	}
+	if threadID != "" && !ValidThreadID(threadID) {
+		return TaskRun{}, ErrThreadUnavailable
+	}
+	var run TaskRun
+	err := withAppServer(ctx, config, func(writer *json.Encoder, reader *bufio.Scanner) error {
+		var err error
+		run, err = runTurn(ctx, config.ProjectDir, threadID, prompt, writer, reader, emit, decide)
+		return err
+	})
+	return run, err
+}
+
+// ValidThreadID accepts the UUID shape Codex returns and nothing else, so a
+// malformed value is refused before a process is started.
+func ValidThreadID(id string) bool {
+	if len(id) != 36 {
+		return false
+	}
+	for i, c := range id {
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			if c != '-' {
+				return false
+			}
+			continue
+		}
+		if !('0' <= c && c <= '9') && !('a' <= c && c <= 'f') && !('A' <= c && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+// openSession creates or resumes the conversation this turn runs in. Resuming
+// keeps every earlier turn; starting keeps a fresh one. Both pin the read-only
+// sandbox and the per-request approval policy, because a resumed thread would
+// otherwise run with whatever the stored session was created with.
+func openSession(ctx context.Context, directory, threadID string, writer *json.Encoder, reader *bufio.Scanner) (string, error) {
+	params := map[string]any{"cwd": directory, "sandbox": "read-only", "approvalPolicy": "on-request"}
+	method := "thread/start"
+	if threadID == "" {
+		// A thread that is not stored has no rollout, and a thread without a
+		// rollout can never be resumed. Confirmed against Codex 0.167.
+		params["ephemeral"] = false
+	} else {
+		method = "thread/resume"
+		params["threadId"] = threadID
+	}
+	request := message{Method: method, ID: 2, Params: params}
+	if err := writer.Encode(request); err != nil {
 		return "", err
 	}
-	raw, err := readResponse(ctx, reader, start)
+	raw, err := readResponse(ctx, reader, request)
 	if err != nil {
+		if threadID != "" {
+			return "", fmt.Errorf("%w: %v", ErrThreadUnavailable, err)
+		}
 		return "", err
 	}
 	var thread struct {
@@ -57,11 +106,21 @@ func runTurn(ctx context.Context, directory, prompt string, writer *json.Encoder
 	if err := json.Unmarshal(raw, &thread); err != nil || thread.Thread.ID == "" {
 		return "", errors.New("Codex returned an invalid thread")
 	}
-	threadID := thread.Thread.ID
+	if threadID != "" && thread.Thread.ID != threadID {
+		return "", fmt.Errorf("%w: Codex resumed a different thread", ErrThreadUnavailable)
+	}
+	return thread.Thread.ID, nil
+}
+
+func runTurn(ctx context.Context, directory, threadID, prompt string, writer *json.Encoder, reader *bufio.Scanner, emit func(TaskEvent) error, decide Decider) (TaskRun, error) {
+	threadID, err := openSession(ctx, directory, threadID, writer, reader)
+	if err != nil {
+		return TaskRun{}, err
+	}
 	if err := writer.Encode(message{Method: "turn/start", ID: 3, Params: map[string]any{
 		"threadId": threadID, "input": []map[string]string{{"type": "text", "text": prompt}},
 	}}); err != nil {
-		return "", err
+		return TaskRun{}, err
 	}
 
 	var turnID string
@@ -75,23 +134,23 @@ func runTurn(ctx context.Context, directory, prompt string, writer *json.Encoder
 			} `json:"params"`
 		}
 		if err := json.Unmarshal(reader.Bytes(), &packet); err != nil {
-			return "", errors.New("invalid Codex task message")
+			return TaskRun{}, errors.New("invalid Codex task message")
 		}
 		if packet.Method != "" && len(packet.ID) > 0 {
 			if err := serveApproval(ctx, packet.Method, packet.ID, packet.Params.approvalRequest, threadID, turnID, writer, emit, decide); err != nil {
-				return "", err
+				return TaskRun{}, err
 			}
 			continue
 		}
 		if packet.Method == "" && string(packet.ID) == "3" {
 			if packet.Error != nil {
-				return "", fmt.Errorf("Codex turn/start returned error code %d", packet.Error.Code)
+				return TaskRun{}, fmt.Errorf("Codex turn/start returned error code %d", packet.Error.Code)
 			}
 			var started struct {
 				Turn struct{ ID string } `json:"turn"`
 			}
 			if err := json.Unmarshal(packet.Result, &started); err != nil || started.Turn.ID == "" || (turnID != "" && turnID != started.Turn.ID) {
-				return "", errors.New("Codex returned an invalid turn")
+				return TaskRun{}, errors.New("Codex returned an invalid turn")
 			}
 			turnID = started.Turn.ID
 			continue
@@ -108,27 +167,28 @@ func runTurn(ctx context.Context, directory, prompt string, writer *json.Encoder
 		case "item/agentMessage/delta", "item/commandExecution/outputDelta":
 			if turnID != "" && p.TurnID == turnID {
 				if err := emit(TaskEvent{Type: packet.Method, ThreadID: threadID, TurnID: turnID, Text: p.Delta}); err != nil {
-					return "", err
+					return TaskRun{}, err
 				}
 			}
 		case "turn/completed":
 			if turnID != "" && p.Turn.ID == turnID {
 				switch p.Turn.Status {
 				case "completed", "failed", "interrupted":
-					return p.Turn.Status, emit(TaskEvent{Type: packet.Method, ThreadID: threadID, TurnID: turnID, Status: p.Turn.Status})
+					run := TaskRun{Status: p.Turn.Status, ThreadID: threadID, TurnID: turnID}
+					return run, emit(TaskEvent{Type: packet.Method, ThreadID: threadID, TurnID: turnID, Status: p.Turn.Status})
 				default:
-					return "", errors.New("Codex returned an invalid completion status")
+					return TaskRun{}, errors.New("Codex returned an invalid completion status")
 				}
 			}
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return "", err
+		return TaskRun{}, err
 	}
 	if err := reader.Err(); err != nil {
-		return "", fmt.Errorf("read Codex task output: %w", err)
+		return TaskRun{}, fmt.Errorf("read Codex task output: %w", err)
 	}
-	return "", errors.New("Codex disconnected before the task finished")
+	return TaskRun{}, errors.New("Codex disconnected before the task finished")
 }
 
 // serveApproval answers one tool request. The decision is single-use and never
