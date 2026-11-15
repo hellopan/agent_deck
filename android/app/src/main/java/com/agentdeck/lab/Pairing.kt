@@ -10,7 +10,12 @@ import java.util.Date
 import java.util.UUID
 import javax.security.auth.x500.X500Principal
 
-internal data class PairingCandidate(val config: JSONObject, val device: String, val fingerprint: String)
+internal data class PairingCandidate(
+    val config: JSONObject,
+    val device: String,
+    val fingerprint: String,
+    val host: String,
+)
 
 internal fun requestPairing(raw: String): PairingCandidate {
     require(raw.length <= 4096)
@@ -38,7 +43,7 @@ internal fun requestPairing(raw: String): PairingCandidate {
             .put("devices", JSONObject().put(device, invite.getJSONObject("entry")))
         val reply = JSONObject(RelayClient(config, device, config.getString("relayUrl")).query("agentdeck-pair-v1 $code"))
         check(reply.optBoolean("pending")) { "电脑未接受配对请求" }
-        return PairingCandidate(config, device, fingerprint)
+        return PairingCandidate(config, device, fingerprint, invite.optString("host").take(64))
     } catch (error: Exception) {
         KeyStore.getInstance("AndroidKeyStore").apply { load(null); deleteEntry(alias) }
         throw error

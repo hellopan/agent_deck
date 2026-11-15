@@ -24,10 +24,46 @@ export AGENTDECK_ENROLLMENT_TOKEN="$(cat enrollment-token)"
 
 1. 双击 Windows 单文件安装程序，在「连接」页点「配置云服务器」，填入上述三项。注册后窗口会启动本机 Agent。需要任务功能时，在「项目」页启用测试项目，并在「设置」页填写已安装的 Codex 路径。
 2. 点「配对手机」。手机 App 点「扫描电脑配对码」。两分钟内在 Windows 点「核对手机指纹」，与手机完整指纹一致后确认。
-3. 手机点「刷新项目」。后续打开软件可以使用同一设备身份。此实验版退出托盘会停止由托盘启动的 Agent，Windows 服务自启仍需单独部署和验收。
+3. 手机确认后自动进入「任务」页，项目列表随队列一起刷新，不需要手动点刷新。后续打开软件使用同一设备身份。此实验版退出托盘会停止由托盘启动的 Agent，Windows 服务自启仍需单独部署和验收。
 
-任务启动仍在 Windows 本机审核。APK 和单文件安装程序的构建与服务器本地注册测试，与真机扫码和公网连接分别验收。
+审批不再需要回到电脑上点。Codex 每次请求执行命令或写文件，Agent 会把请求挂起、推给手机，手机在 5 分钟内决定，超时按拒绝处理。会话级的目录或网络授权请求不推给手机，Agent 直接拒绝。
+
+## 手机界面
+
+四块，对应 `design/ui-v2.html` 的 `pt` / `pa` / `pr` 三屏加一个连接页：
+
+| 界面 | 内容 | 数据来源 |
+|---|---|---|
+| 任务 | 设备切换、待处理 / 运行中 / 已完成分段、审批与队列卡片 | `agentdeck-approvals-v1`、`agentdeck-queue-v1` |
+| 审批 | 风险条、完整命令与工作目录、2×3 事实、有效期条、影响范围、拒绝 / 允许一次 | `agentdeck-approve-v1` |
+| 执行轨迹 | 实时事件流（消息 / 命令 / 审批 / 结束四类着色）、跟随开关、叫停 | `agentdeck-task-log-v1` |
+| 连接 | 连通状态与延迟、计算机名、设备 ID、手机指纹、切换与重新配对 | `agentdeck-pair-v1`、`agentdeck-projects-v1` |
+
+约定：
+
+- 列表与审批每 2~3 秒轮询一次（有未决审批时用 2 秒），轨迹页按游标每 2 秒补拉，断线重连后从 `after` 继续。
+- 「允许一次」先要求系统锁屏验证（`createConfirmDeviceCredentialIntent`）。设备没设锁屏时弹窗说明风险，要求显式确认后才放行。
+- 调试构建不加 `FLAG_SECURE`，可以直接截图；release 构建加，防止录屏。
+
+`design/phone/` 下是这四块的真机分辨率截图（1080×2400，模拟器 Android 15）。
+
+## 调试画廊
+
+`android/app/src/debug/` 里有一个只在 debug 构建存在的 `GalleryActivity`，用固定样本数据渲染上面四屏，不需要电脑在线：
+
+```sh
+adb shell am start -n com.agentdeck.lab/.GalleryActivity --es screen tasks   # tasks | approval | trace | submit | connect
+```
+
+修改界面后先在这里对一遍 `design/ui-v2.html`，再上真机联调。样本数据在 `GalleryActivity.kt` 底部，改文案或补字段时同步改它。
 
 ## 构建 APK
 
-准备 Java 17、Gradle 8.13、Android SDK API 36 和 Build Tools 35.0.0。配置 `ANDROID_HOME` 后运行 `gradle -p android :app:assembleDebug`。APK 输出位于 `android/app/build/outputs/apk/debug/app-debug.apk`。
+准备 Java 17、Gradle 8.13、Android SDK Platform 36 与 Build Tools 36.0.0，并在 `android/local.properties` 写明 SDK 路径：
+
+```properties
+sdk.dir=D:/path/to/android/sdk
+```
+
+然后 `gradle -p android :app:assembleDebug`，APK 位于 `android/app/build/outputs/apk/debug/app-debug.apk`。
+

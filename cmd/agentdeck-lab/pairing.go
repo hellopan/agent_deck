@@ -56,10 +56,21 @@ func pairingInvite(agent, folder, device string, output io.Writer) error {
 		Version          int          `json:"version"`
 		Code             string       `json:"code"`
 		Device           string       `json:"device"`
+		Host             string       `json:"host,omitempty"`
 		RelayURL         string       `json:"relayUrl"`
 		RelayCertificate string       `json:"relayCertificate"`
 		Entry            deviceConfig `json:"entry"`
-	}{1, code, device, host.RelayURL, host.RelayCertificate, entry})
+	}{1, code, device, hostName(), host.RelayURL, host.RelayCertificate, entry})
+}
+
+// hostName labels a pairing invite so the phone can name the machine it drives.
+// The value is display-only; authorization never depends on it.
+func hostName() string {
+	name, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(name)
 }
 
 func pairingFingerprint(cert *x509.Certificate) string {

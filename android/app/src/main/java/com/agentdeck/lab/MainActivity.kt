@@ -1,273 +1,266 @@
 package com.agentdeck.lab
 
+import android.app.KeyguardManager
+import android.content.pm.ApplicationInfo
+import android.graphics.Color as AndroidColor
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.layout.size
+import com.agentdeck.lab.ui.ApprovalScreen
+import com.agentdeck.lab.ui.ButtonKind
+import com.agentdeck.lab.ui.ConnectScreen
+import com.agentdeck.lab.ui.DeskColors
+import com.agentdeck.lab.ui.Dot
+import com.agentdeck.lab.ui.PButton
+import com.agentdeck.lab.ui.SubmitDialog
+import com.agentdeck.lab.ui.TaskListScreen
+import com.agentdeck.lab.ui.Tok
+import com.agentdeck.lab.ui.TraceScreen
+import com.agentdeck.lab.ui.deskTypography
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
-import java.util.UUID
+import kotlinx.coroutines.delay
+
+private sealed interface Route {
+    data object Tasks : Route
+    data class Approval(val id: String) : Route
+    data class Trace(val taskId: String, val projectId: String) : Route
+    data object Connect : Route
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        enableEdgeToEdge()
-        setContent { MaterialTheme { Surface { LabScreen() } } }
+        // Screenshots of a secure window are blank, so debug builds stay capturable
+        // for UI review; release builds keep the flag.
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) {
+            window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        }
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+        )
+        setContent {
+            MaterialTheme(colorScheme = DeskColors, typography = deskTypography()) {
+                Box(Modifier.fillMaxSize().background(Tok.Bg)) { AgentDeckApp() }
+            }
+        }
     }
 
-    @OptIn(ExperimentalLayoutApi::class)
     @Composable
-    private fun LabScreen() {
-        val storage = remember { LabState(this) }
+    private fun AgentDeckApp() {
         val scope = rememberCoroutineScope()
-        var config by remember { mutableStateOf<JSONObject?>(null) }
-        var endpoint by remember { mutableStateOf("") }
-        var device by remember { mutableStateOf("a") }
-        var projects by remember { mutableStateOf(emptyList<String>()) }
-        var project by remember { mutableStateOf("") }
-        var prompt by remember { mutableStateOf("") }
-        var requestID by remember { mutableStateOf("") }
-        var taskID by remember { mutableStateOf("") }
-        var taskStatus by remember { mutableStateOf("") }
-        var cursor by remember { mutableIntStateOf(0) }
-        var log by remember { mutableStateOf("") }
-        var status by remember { mutableStateOf("请扫描 Windows 客户端显示的配对码。") }
-        var fingerprint by remember { mutableStateOf("") }
-        var busy by remember { mutableStateOf(false) }
-        var confirmCancel by remember { mutableStateOf(false) }
+        val desk = remember { Desk(LabState(this), scope) }
+        var route by remember { mutableStateOf<Route>(Route.Tasks) }
+        var showSubmit by remember { mutableStateOf(false) }
+        var allowId by remember { mutableStateOf<String?>(null) }
+        var noLockId by remember { mutableStateOf<String?>(null) }
+        var wasAwaiting by remember { mutableStateOf(false) }
 
-        fun persist() {
-            val pairing = config ?: return
-            storage.write(JSONObject().put("config", pairing).put("endpoint", endpoint).put("device", device)
-                .put("project", project).put("requestId", requestID).put("taskId", taskID)
-                .put("pendingPrompt", if (requestID.isNotEmpty() && taskID.isEmpty()) prompt else ""))
+        val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
+            result.contents?.let { desk.pair(it) }
         }
-        fun perform(action: suspend () -> Unit) {
-            if (busy) return
-            scope.launch {
-                busy = true
-                status = "正在处理…"
-                try {
-                    action()
-                } catch (cancel: kotlinx.coroutines.CancellationException) {
-                    throw cancel
-                } catch (_: Exception) {
-                    status = "操作失败。请检查 Relay 地址、实验配置和电脑连接，再重试。"
-                } finally {
-                    busy = false
-                }
-            }
+        val credential = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val id = allowId
+            allowId = null
+            if (result.resultCode == RESULT_OK && id != null) desk.decide(id, true)
         }
-        suspend fun query(action: String, payload: JSONObject? = null): String {
-            val pairing = config ?: error("请扫描配对码")
-            val origin = endpoint
-            val target = device
-            return withContext(Dispatchers.IO) {
-                val command = if (payload == null) action else "$action $payload"
-                require(command.toByteArray(Charsets.UTF_8).size < 24 * 1024)
-                RelayClient(pairing, target, origin).query(command)
-            }
-        }
-        fun resetTask() {
-            taskID = ""
-            requestID = ""
-            taskStatus = ""
-            cursor = 0
-            log = ""
-        }
-        suspend fun submit() {
-            if (requestID.isEmpty()) requestID = UUID.randomUUID().toString().replace("-", "")
-            persist()
-            val reply = JSONObject(query("agentdeck-task-submit-v1",
-                JSONObject().put("projectId", project).put("requestId", requestID).put("prompt", prompt)))
-            val id = reply.getString("taskId")
-            require(id.matches(Regex("[a-f0-9]{32}")))
-            taskID = id
-            taskStatus = reply.getString("status")
-            persist()
-            status = "回执已收到。待审核任务可在 Windows 上处理。"
-        }
-        val scanner = rememberLauncherForActivityResult(ScanContract()) { scan ->
-            scan.contents?.let { code -> perform {
-                val candidate = withContext(Dispatchers.IO) { requestPairing(code) }
-                device = candidate.device
-                endpoint = candidate.config.getString("relayUrl")
-                config = candidate.config
-                fingerprint = candidate.fingerprint
-                projects = emptyList()
-                project = ""
-                resetTask()
-                persist()
-                status = "请在电脑上核对设备指纹并确认，然后刷新项目。"
-            } }
-        }
+
         LaunchedEffect(Unit) {
-            try {
-                val saved = storage.read()
-                if (saved != null && saved.optJSONObject("config")?.has("keyAlias") == true) {
-                    config = saved.getJSONObject("config")
-                    endpoint = saved.getString("endpoint")
-                    device = saved.getString("device")
-                    project = saved.optString("project")
-                    requestID = saved.optString("requestId")
-                    taskID = saved.optString("taskId")
-                    prompt = saved.optString("pendingPrompt")
-                    status = "已恢复本机配置。刷新项目或查询原任务。"
-                }
-            } catch (_: Exception) {
-                status = "本机配置不可用，请重新扫码。"
+            desk.restore()
+            if (!desk.paired) route = Route.Connect
+            desk.start()
+        }
+        DisposableEffect(Unit) { onDispose { desk.stop() } }
+        LaunchedEffect(desk.submitted) { if (desk.submitted > 0) showSubmit = false }
+        LaunchedEffect(desk.awaitingConfirm) {
+            if (wasAwaiting && !desk.awaitingConfirm && desk.reachable == true && route == Route.Connect) {
+                delay(900)
+                route = Route.Tasks
             }
+            wasAwaiting = desk.awaitingConfirm
+        }
+        LaunchedEffect(desk.notice, desk.error) {
+            if ((desk.notice.isNotEmpty() || desk.error != null) && route != Route.Connect) {
+                delay(4_500)
+                desk.dismissNotice()
+            }
+        }
+        BackHandler(enabled = desk.paired && route != Route.Tasks) {
+            route = Route.Tasks
         }
 
-        Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Text("AgentDeck", style = MaterialTheme.typography.headlineMedium)
-            Text(status, style = MaterialTheme.typography.bodyMedium)
-            OutlinedButton(onClick = { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-                .setPrompt("扫描 AgentDeck 电脑端配对码").setBeepEnabled(false)) },
-                enabled = !busy) { Text("扫描电脑配对码") }
-            if (fingerprint.isNotEmpty()) {
-                Text("手机指纹")
-                SelectionContainer { Text(fingerprint.chunked(8).joinToString(" "), fontFamily = FontFamily.Monospace) }
+        fun scan() = scanner.launch(
+            ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                .setPrompt("扫描 AgentDeck 电脑端配对码")
+                .setBeepEnabled(false)
+        )
+
+        // Deprecated in favour of BiometricPrompt, but this call is the only one
+        // that works on API 29 without an extra dependency; revisit when the app
+        // raises minSdk.
+        @Suppress("DEPRECATION")
+        fun requestAllow(id: String) {
+            val keyguard = getSystemService(KeyguardManager::class.java)
+            if (keyguard == null || !keyguard.isDeviceSecure) {
+                noLockId = id
+                return
             }
-            OutlinedTextField(endpoint, {
-                endpoint = it
-                projects = emptyList()
-                project = ""
-                resetTask()
-            }, Modifier.fillMaxWidth(), label = { Text("Relay WSS 地址") }, enabled = !busy, singleLine = true)
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                config?.optJSONObject("devices")?.keys()?.asSequence()?.toList().orEmpty().forEach { id ->
-                    FilterChip(selected = device == id, onClick = {
-                        if (device != id) {
-                            device = id
-                            project = ""
-                            projects = emptyList()
-                            resetTask()
-                            perform { persist(); status = "已切换设备。" }
-                        }
-                    }, label = { Text("设备 " + id.take(8).uppercase()) }, enabled = !busy)
-                }
-                OutlinedButton(onClick = { perform {
-                    val reply = JSONArray(query("agentdeck-projects-v1"))
-                    fingerprint = ""
-                    projects = List(reply.length()) { reply.getString(it) }
-                    if (project !in projects) {
-                        project = projects.firstOrNull().orEmpty()
-                        resetTask()
-                    }
-                    persist()
-                    status = if (projects.isEmpty()) "设备在线。请在电脑上授权项目。" else "设备在线，项目列表已更新。"
-                } }, enabled = config != null && !busy) { Text("刷新项目") }
+            val intent = keyguard.createConfirmDeviceCredentialIntent(
+                "允许这一次执行",
+                "确认是你在批准 Codex 的请求",
+            )
+            if (intent == null) {
+                desk.decide(id, true)
+                return
             }
-            if (projects.isNotEmpty()) {
-                Text("授权项目", style = MaterialTheme.typography.titleMedium)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    projects.forEach { id ->
-                        FilterChip(selected = project == id, onClick = {
-                            if (project != id) {
-                                project = id
-                                resetTask()
-                                perform { persist(); status = "已切换项目。" }
-                            }
-                        }, label = { Text(id) }, enabled = !busy)
-                    }
-                }
-            }
-            if (project.isNotEmpty()) {
-                OutlinedTextField(prompt, { prompt = it }, Modifier.fillMaxWidth(),
-                    label = { Text("任务提示") }, enabled = !busy && requestID.isEmpty(), minLines = 3)
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { perform { submit() } },
-                        enabled = !busy && taskID.isEmpty() && prompt.isNotBlank() && prompt.toByteArray().size <= 4096) {
-                        Text(if (requestID.isEmpty()) "提交任务" else "重试原提交")
-                    }
-                    if (requestID.isNotEmpty()) {
-                        OutlinedButton(onClick = { perform {
-                            val id = taskID.ifEmpty {
-                                java.security.MessageDigest.getInstance("SHA-256").digest(requestID.toByteArray())
-                                    .take(16).joinToString("") { "%02x".format(it.toInt() and 255) }
-                            }
-                            val reply = JSONObject(query("agentdeck-task-receipt-v1",
-                                JSONObject().put("projectId", project).put("taskId", id)))
-                            require(reply.getString("taskId") == id)
-                            taskID = id
-                            taskStatus = reply.getString("status")
-                            persist()
-                            status = "任务状态已更新。"
-                        } }, enabled = !busy) { Text("查询回执") }
-                        TextButton(onClick = { perform {
-                            resetTask()
-                            prompt = ""
-                            persist()
-                            status = "可以填写新任务。"
-                        } }, enabled = !busy) { Text("新任务") }
-                    }
-                }
-            }
-            if (taskID.isNotEmpty()) {
-                Text("任务 " + taskID.take(12), style = MaterialTheme.typography.titleMedium)
-                Text(when (taskStatus) {
-                    "awaiting_local_review" -> "待电脑审核"
-                    "claimed" -> "已领取，等待最终状态"
-                    "declined" -> "已拒绝"
-                    "completed" -> "已完成"
-                    "failed" -> "执行失败"
-                    "interrupted" -> "已中断"
-                    else -> "查询回执可刷新状态"
-                })
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = { perform {
-                        val reply = JSONObject(query("agentdeck-task-log-v1",
-                            JSONObject().put("projectId", project).put("taskId", taskID).put("after", cursor)))
-                        val page = reply.getJSONObject("page")
-                        val events = page.getJSONArray("events")
-                        for (i in 0 until events.length()) {
-                            val event = events.getJSONObject(i)
-                            log = (log + event.optString("text")).takeLast(32768)
-                            if (event.optString("type") == "task/finished") taskStatus = event.getString("status")
-                        }
-                        cursor = page.getInt("next")
-                        status = if (events.length() == 0) "目前没有新日志。" else "已补拉日志。"
-                    } }, enabled = !busy) { Text("补拉日志") }
-                    TextButton(onClick = { confirmCancel = true }, enabled = !busy &&
-                        taskStatus !in listOf("declined", "completed", "failed", "interrupted")) { Text("请求取消") }
-                }
-                if (log.isNotBlank()) SelectionContainer { Text(log, fontFamily = FontFamily.Monospace) }
-            }
-            if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+            allowId = id
+            credential.launch(intent)
         }
-        if (confirmCancel) AlertDialog(
-            onDismissRequest = { confirmCancel = false },
-            title = { Text("请求取消任务？") },
-            text = { Text("设备 ${device.uppercase()} · $project · ${taskID.take(12)}") },
-            confirmButton = { TextButton(onClick = {
-                confirmCancel = false
-                perform {
-                    val reply = JSONObject(query("agentdeck-task-cancel-v1",
-                        JSONObject().put("projectId", project).put("taskId", taskID)))
-                    require(reply.optBoolean("requested"))
-                    status = "取消请求已记录。请查询最终状态。"
-                }
-            }) { Text("请求取消") } },
-            dismissButton = { TextButton(onClick = { confirmCancel = false }) { Text("返回") } }
+
+        Box(Modifier.fillMaxSize()) {
+        when (val current = route) {
+            Route.Tasks -> TaskListScreen(
+                desk = desk,
+                onApproval = { route = Route.Approval(it) },
+                onTrace = { route = Route.Trace(it.taskId, it.projectId) },
+                onSubmit = { showSubmit = true },
+                onStatus = { route = Route.Connect },
+            )
+            is Route.Approval -> {
+                val item = desk.approvals.firstOrNull { it.id == current.id }
+                ApprovalScreen(
+                    approval = item,
+                    device = desk.label,
+                    busy = desk.busy,
+                    onAllow = { requestAllow(current.id) },
+                    onDecline = { desk.decide(current.id, false) },
+                    onBack = { route = Route.Tasks },
+                )
+            }
+            is Route.Trace -> {
+                val item = desk.items.firstOrNull { it.taskId == current.taskId }
+                TraceScreen(
+                    desk = desk,
+                    item = item,
+                    taskId = current.taskId,
+                    projectId = current.projectId,
+                    onBack = { route = Route.Tasks },
+                    onCancel = { desk.cancel(current.taskId, current.projectId) },
+                )
+            }
+            Route.Connect -> ConnectScreen(
+                desk = desk,
+                onScan = { scan() },
+                onBack = if (desk.paired) ({ route = Route.Tasks }) else null,
+                onRefresh = { desk.refresh() },
+            )
+        }
+
+        if (desk.busy) {
+            Box(Modifier.align(Alignment.TopCenter).statusBarsPadding().fillMaxWidth().height(2.dp).background(Tok.Amber))
+        }
+        val banner = desk.error ?: desk.notice.takeIf { it.isNotEmpty() && route != Route.Connect }
+        if (banner != null) {
+            NoticeBar(
+                text = banner,
+                isError = desk.error != null,
+                modifier = Modifier.align(Alignment.BottomCenter),
+                onDismiss = { desk.dismissNotice() },
+            )
+        }
+        if (showSubmit) SubmitDialog(desk = desk, onDismiss = { showSubmit = false })
+        if (noLockId != null) AlertDialog(
+            onDismissRequest = { noLockId = null },
+            containerColor = Tok.Panel,
+            titleContentColor = Tok.Tx,
+            textContentColor = Tok.Tx2,
+            shape = RoundedCornerShape(14.dp),
+
+            title = { Text("这台手机没有设置锁屏", color = Tok.Tx, fontSize = 15.sp) },
+            text = {
+                Text(
+                    "批准会直接生效，任何人拿到手机都能放行命令。建议先在系统里设置锁屏或指纹，再回来批准。",
+                    color = Tok.Tx2,
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp,
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val id = noLockId
+                    noLockId = null
+                    if (id != null) desk.decide(id, true)
+                }) { Text("仍然批准", color = Tok.Red) }
+            },
+            dismissButton = {
+                TextButton(onClick = { noLockId = null }) { Text("取消", color = Tok.Tx3) }
+            },
+        )
+        }
+    }
+}
+
+@Composable
+private fun NoticeBar(text: String, isError: Boolean, modifier: Modifier = Modifier, onDismiss: () -> Unit) {
+    Row(
+        modifier.navigationBarsPadding().padding(horizontal = 16.dp, vertical = 14.dp)
+            .fillMaxWidth().clip(RoundedCornerShape(10.dp))
+            .background(if (isError) Tok.RedBg else Tok.Panel2)
+            .border(1.dp, if (isError) Tok.Red.copy(alpha = 0.35f) else Tok.Line, RoundedCornerShape(10.dp))
+            .clickable { onDismiss() }
+            .padding(horizontal = 12.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Dot(if (isError) Tok.Red else Tok.Green)
+        Spacer(Modifier.width(9.dp))
+        Text(
+            text,
+            color = if (isError) Tok.Red.copy(alpha = 0.9f) else Tok.Tx2,
+            fontSize = 11.5.sp,
+            lineHeight = 17.sp,
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }

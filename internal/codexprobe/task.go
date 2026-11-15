@@ -17,6 +17,7 @@ type TaskEvent struct {
 	TurnID   string `json:"turnId"`
 	Text     string `json:"text,omitempty"`
 	Status   string `json:"status,omitempty"`
+	At       string `json:"at,omitempty"`
 }
 
 // RunReadOnlyTask starts one local turn under a read-only sandbox. Anything the

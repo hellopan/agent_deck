@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 const maxRecord = 2 * 1024 * 1024
@@ -62,14 +63,24 @@ func OpenNewJournal(root, projectID, directory, taskID string) (*Journal, error)
 
 func (j *Journal) Append(event TaskEvent) error {
 	// Leave room for a final diagnostic even when the task reaches its limit.
-	return j.append(event, maxJournal-4096)
+	return j.append(stamped(event), maxJournal-4096)
 }
 
 func (j *Journal) Finish(status string) error {
 	if !IsFinalTaskStatus(status) {
 		return errors.New("invalid final task status")
 	}
-	return j.append(TaskEvent{Type: "task/finished", Status: status}, maxJournal)
+	return j.append(stamped(TaskEvent{Type: "task/finished", Status: status}), maxJournal)
+}
+
+// stamped records when the client received the event. The timeline is the only
+// consumer, so a wall-clock string keeps the log readable without changing any
+// protocol shape the Agent already emits.
+func stamped(event TaskEvent) TaskEvent {
+	if event.At == "" {
+		event.At = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	return event
 }
 
 func IsFinalTaskStatus(status string) bool {

@@ -1,0 +1,158 @@
+package com.agentdeck.lab
+
+import android.graphics.Color as AndroidColor
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Modifier
+import com.agentdeck.lab.ui.ApprovalScreen
+import com.agentdeck.lab.ui.ConnectScreen
+import com.agentdeck.lab.ui.DeskColors
+import com.agentdeck.lab.ui.SubmitDialog
+import com.agentdeck.lab.ui.TaskListScreen
+import com.agentdeck.lab.ui.Tok
+import com.agentdeck.lab.ui.TraceScreen
+import com.agentdeck.lab.ui.deskTypography
+
+/**
+ * Debug-only screen gallery. Nothing here ships in a release build; it exists so
+ * each screen can be opened and compared against design/ui-v2.html without a
+ * paired desktop. Launch with:
+ *   adb shell am start -n com.agentdeck.lab/.GalleryActivity --es screen tasks
+ */
+class GalleryActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+        )
+        val screen = intent.getStringExtra("screen").orEmpty()
+        setContent {
+            MaterialTheme(colorScheme = DeskColors, typography = deskTypography()) {
+                val scope = rememberCoroutineScope()
+                val desk = remember {
+                    Desk(LabState(this), scope).apply {
+                        seedPreview(sampleQueue, sampleApprovals, sampleRunning)
+                    }
+                }
+                Box(Modifier.fillMaxSize().background(Tok.Bg)) {
+                    when (screen) {
+                        "tasks" -> TaskListScreen(desk, {}, {}, {}, {})
+                        "approval" -> ApprovalScreen(
+                            approval = sampleApprovals.first(),
+                            device = desk.label,
+                            busy = false,
+                            onAllow = {},
+                            onDecline = {},
+                            onBack = {},
+                        )
+                        "trace" -> TraceScreen(
+                            desk = desk,
+                            item = sampleQueue.first { it.status == "running" },
+                            taskId = "7c1e04b26a5d4f8e9b0c1d2e3f405162",
+                            projectId = "api-gateway",
+                            onBack = {},
+                            onCancel = {},
+                            preview = sampleTrace,
+                        )
+                        "connect" -> ConnectScreen(desk, {}, {}, {})
+                        "submit" -> {
+                            TaskListScreen(desk, {}, {}, {}, {})
+                            SubmitDialog(desk) {}
+                        }
+                        else -> TaskListScreen(desk, {}, {}, {}, {})
+                    }
+                }
+            }
+        }
+    }
+}
+
+private const val MINUTE = 60_000L
+
+private val sampleApprovals = listOf(
+    ApprovalItem(
+        id = "3f2a91d0c7b64e58a19d0f3c2b5e7a41",
+        taskId = "7c1e04b26a5d4f8e9b0c1d2e3f405162",
+        projectId = "web-app",
+        adapterId = "codex",
+        kind = "command",
+        command = "rm -rf dist/ && pnpm build",
+        cwd = "C:\\work\\web-app",
+        reason = "需要删除旧的构建产物再重新打包",
+        secondsLeft = 252,
+    ),
+    ApprovalItem(
+        id = "9b8c7d6e5f40312233445566778899aa",
+        taskId = "5a4b3c2d1e0f90817263544534231201",
+        projectId = "web-app",
+        adapterId = "codex",
+        kind = "file",
+        command = "",
+        cwd = "C:\\work\\web-app",
+        reason = "写 test/rate-limit.spec.ts · 追加 12 行",
+        secondsLeft = 228,
+    ),
+)
+
+private val sampleQueue = listOf(
+    QueueItem(
+        taskId = "5a4b3c2d1e0f90817263544534231201",
+        projectId = "web-app",
+        status = "queued",
+        submittedAt = System.currentTimeMillis() - 8 * MINUTE,
+        summary = "补全 src/user 下 5 个模块的单元测试",
+        prompt = "补全 src/user 下 5 个模块的单元测试",
+    ),
+    QueueItem(
+        taskId = "7c1e04b26a5d4f8e9b0c1d2e3f405162",
+        projectId = "api-gateway",
+        status = "running",
+        submittedAt = System.currentTimeMillis() - 12 * MINUTE,
+        summary = "排查限流中间件的并发问题",
+        prompt = "排查限流中间件的并发问题，复现后给出最小修复",
+    ),
+    QueueItem(
+        taskId = "1a2b3c4d5e6f708192a3b4c5d6e7f809",
+        projectId = "web-app",
+        status = "completed",
+        submittedAt = System.currentTimeMillis() - 53 * MINUTE,
+        summary = "pnpm lint --fix",
+        prompt = "pnpm lint --fix",
+    ),
+    QueueItem(
+        taskId = "0f1e2d3c4b5a69788796a5b4c3d2e1f0",
+        projectId = "web-app",
+        status = "interrupted",
+        submittedAt = System.currentTimeMillis() - 131 * MINUTE,
+        summary = "git push origin feat/ui",
+        prompt = "git push origin feat/ui",
+    ),
+)
+
+private val sampleRunning = RunningTask(
+    taskId = "7c1e04b26a5d4f8e9b0c1d2e3f405162",
+    projectId = "api-gateway",
+    startedAt = System.currentTimeMillis() - 12 * MINUTE,
+    waitingFor = "item/commandExecution/requestApproval",
+)
+
+private val sampleTrace = listOf(
+    TraceEvent("turn/started", "", "", System.currentTimeMillis() - 12 * MINUTE),
+    TraceEvent("item/agentMessage/delta", "先读限流中间件与它的调用方，确认是否存在共享状态。", "", System.currentTimeMillis() - 12 * MINUTE + 7_000),
+    TraceEvent("item/commandExecution/outputDelta", "rate-limit.ts  218 lines\nrate-limit.spec.ts  94 lines", "", System.currentTimeMillis() - 11 * MINUTE),
+    TraceEvent("approval/requested", "命令 npm test -- --runInBand", "", System.currentTimeMillis() - 10 * MINUTE),
+    TraceEvent("approval/approved", "命令 npm test -- --runInBand", "accept", System.currentTimeMillis() - 10 * MINUTE + 4_000),
+    TraceEvent("item/commandExecution/outputDelta", "PASS  test/rate-limit.spec.ts\n  ✓ rejects bursts above the window limit (312 ms)", "", System.currentTimeMillis() - 2 * MINUTE),
+    TraceEvent("item/agentMessage/delta", "并发窗口用的是进程内 Map，多实例部署时会各算一份。建议改成 Redis 计数，或把窗口收敛到单实例。", "", System.currentTimeMillis() - MINUTE),
+    TraceEvent("turn/completed", "", "completed", System.currentTimeMillis() - 30_000),
+)
