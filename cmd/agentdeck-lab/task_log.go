@@ -24,7 +24,7 @@ type taskLogReply struct {
 func addTaskLogOptions(flags *flag.FlagSet) *taskLogQuery {
 	query := &taskLogQuery{}
 	flags.StringVar(&query.ProjectID, "project-id", "", "authorized project ID")
-	flags.StringVar(&query.TaskID, "task-id", "", "task ID previously returned by codex-task")
+	flags.StringVar(&query.TaskID, "task-id", "", "task ID previously returned by queue")
 	flags.IntVar(&query.After, "after", 0, "last event cursor")
 	return query
 }
