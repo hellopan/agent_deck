@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+<ItemGroup><Reference Include="AgentDeck.Tray"><HintPath>../../windows/AgentDeck.Tray/bin/Release/net10.0-windows/win-x64/AgentDeck.Tray.dll</HintPath></Reference><Reference Include="QRCoder"><HintPath>../.nuget/packages/qrcoder/1.6.0/lib/net6.0-windows7.0/QRCoder.dll</HintPath></Reference></ItemGroup>
+</Project>

@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentDeck · 任务审核页（合并方案）</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #E7E9ED;
+    font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+    color: #171A1F; -webkit-font-smoothing: antialiased;
+  }
+  .shell { max-width: 1200px; margin: 0 auto; padding: 26px 24px 60px; }
+  .intro h1 { font-size: 19px; font-weight: 600; letter-spacing: -.01em; }
+  .intro p { font-size: 13px; color: #565C65; margin-top: 8px; line-height: 1.75; max-width: 880px; }
+  .intro p b { color: #171A1F; font-weight: 600; }
+  .bar { display: flex; align-items: center; gap: 8px; margin: 18px 0 14px; }
+  .bar .lbl { font-size: 12px; color: #71787F; margin-right: 2px; }
+  .sw {
+    border: 1px solid #D2D6DC; background: #FFF; color: #3B4149;
+    font-family: inherit; font-size: 12.5px; font-weight: 500; line-height: 1;
+    padding: 9px 14px; border-radius: 7px; cursor: pointer; transition: .15s ease;
+  }
+  .sw:hover { border-color: #A8AEB7; }
+  .sw.on { background: #171A1F; border-color: #171A1F; color: #FFF; }
+  .bar .hint { margin-left: auto; font-size: 12px; color: #7C838B; }
+  .viewport { width: 100%; position: relative; }
+  .frame {
+    width: 1120px; height: 720px; transform-origin: top left; overflow: hidden;
+    box-shadow: 0 12px 38px rgba(18,22,29,.18), 0 1px 3px rgba(18,22,29,.12); border-radius: 9px;
+  }
+  .caption { margin-top: 18px; display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(236px, 1fr)); }
+  .caption div { background: #FFF; border: 1px solid #DCE0E5; border-radius: 8px; padding: 13px 15px; font-size: 12.5px; line-height: 1.7; color: #4B5158; }
+  .caption b { color: #171A1F; font-weight: 600; display: block; margin-bottom: 5px; }
+  .mono { font-family: "Cascadia Code", "JetBrains Mono", Consolas, ui-monospace, monospace; }
+
+  /* ================= 窗口外壳 ================= */
+  .win { width: 1120px; height: 720px; display: flex; flex-direction: column; overflow: hidden;
+         background: var(--bg); color: var(--tx); }
+  .win[data-theme="dark"] {
+    --bg: #0A0D11; --bar: #0C1015; --panel: #0E1319; --panel2: #141B23;
+    --line: #1C242E; --line2: #151C24;
+    --tx: #DDE5EF; --tx2: #9DABBA; --tx3: #7E8C9C;
+    --amber: #D9A441; --amberbg: #241C0D;
+    --green: #46B85C; --btn: #238636; --btnh: #2EA043;
+    --red: #E5534B; --code: #0B1015; --sel: #10161E;
+    --shadow: 0 1px 0 rgba(255,255,255,.045) inset;
+  }
+  .win[data-theme="light"] {
+    --bg: #FFFFFF; --bar: #FBFBFC; --panel: #FBFCFD; --panel2: #F3F6F9;
+    --line: #E3E7EC; --line2: #EEF1F4;
+    --tx: #131A21; --tx2: #515C69; --tx3: #6B7683;
+    --amber: #96650A; --amberbg: #FDF6E7;
+    --green: #1A7F37; --btn: #1A7F37; --btnh: #166B2E;
+    --red: #B42318; --code: #FAFBFC; --sel: #F4F7FA;
+    --shadow: 0 1px 0 rgba(255,255,255,.6) inset;
+  }
+
+  /* ---- 顶栏：设备带（取自 2） ---- */
+  .top { height: 42px; flex: none; display: flex; align-items: center; gap: 10px;
+         padding: 0 14px; background: var(--bar); border-bottom: 1px solid var(--line); }
+  .mark { width: 13px; height: 13px; border-radius: 3px; background: var(--amber); }
+  .brand { font-size: 12px; font-weight: 600; letter-spacing: .07em; }
+  .devs { display: flex; gap: 3px; margin-left: 12px; }
+  .dt { display: flex; align-items: center; gap: 7px; height: 26px; padding: 0 10px;
+        font-size: 11.5px; color: var(--tx3); border: 1px solid transparent; border-radius: 4px; }
+  .dt .nm { font-size: 11.5px; font-weight: 500; letter-spacing: .01em; }
+  .dt.on { background: var(--panel2); border-color: var(--line); color: var(--tx); }
+  .dt .n { font-family: "Cascadia Code", Consolas, monospace; font-size: 10px; color: var(--amber);
+           background: var(--amberbg); border-radius: 2px; padding: 0 4px; }
+  .dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .dot.ok { background: var(--green); }
+  .dot.off { background: var(--tx3); opacity: .55; }
+  .top .right { margin-left: auto; display: flex; align-items: center; gap: 7px;
+                font-size: 11px; color: var(--tx3); letter-spacing: .02em;
+                font-family: "Cascadia Code", Consolas, monospace; }
+  .winbtns { margin-left: 12px; font-size: 11.5px; color: var(--tx3); letter-spacing: .1em; }
+
+  /* ---- 主体 ---- */
+  .body { flex: 1; display: flex; min-height: 0; }
+
+  /* 图标栏（取自 1） */
+  .rail { width: 52px; flex: none; background: var(--bar); border-right: 1px solid var(--line);
+          display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 3px; }
+  .ic { width: 34px; height: 34px; border-radius: 7px; display: grid; place-items: center;
+        color: var(--tx3); position: relative; }
+  .ic svg { width: 17px; height: 17px; }
+  .ic.on { background: var(--panel2); color: var(--tx); }
+  .ic.on::before { content: ""; position: absolute; left: -7px; top: 7px; bottom: 7px;
+                   width: 2px; border-radius: 2px; background: var(--amber); }
+  .ic .n { position: absolute; top: -4px; right: -7px; min-width: 12px; height: 12px; padding: 0 3px;
+           border-radius: 6px; background: var(--amber); color: #17130A; font-size: 9px;
+           font-weight: 700; display: grid; place-items: center;
+           font-family: "Cascadia Code", Consolas, monospace;
+           box-shadow: 0 0 0 2px var(--bar); }
+  .rail .sp { flex: 1; }
+
+  /* 队列列（取自 1 的卡片 + 2 的底部元信息） */
+  .queue { width: 296px; flex: none; border-right: 1px solid var(--line);
+           display: flex; flex-direction: column; background: var(--panel); }
+  .qhead { height: 50px; flex: none; display: flex; align-items: center; justify-content: space-between;
+           padding: 0 16px; border-bottom: 1px solid var(--line2); }
+  .qhead b { font-size: 14px; font-weight: 600; letter-spacing: -.005em; }
+  .qhead .c { font-size: 11px; color: var(--tx3); background: var(--panel2);
+              border-radius: 20px; padding: 2px 7px; margin-left: 7px;
+              font-family: "Cascadia Code", Consolas, monospace; }
+  .qhead .rf { font-size: 11.5px; color: var(--tx3); }
+  .qi { padding: 12px 16px 13px; border-bottom: 1px solid var(--line2); position: relative; }
+  .qi.on { background: var(--sel); }
+  .qi.on::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--amber); }
+  .qi-top { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--tx3);
+            font-family: "Cascadia Code", Consolas, monospace; }
+  .dev { width: 16px; height: 16px; border-radius: 4px; background: var(--tx); color: var(--bg);
+         font-size: 9.5px; font-weight: 700; display: grid; place-items: center; flex: none;
+         font-family: "Cascadia Code", Consolas, monospace; }
+  .qi-top .tm { margin-left: auto; }
+  .qi-ttl { font-size: 13px; font-weight: 500; margin-top: 7px; letter-spacing: -.005em; }
+  .qi-meta { display: flex; align-items: center; gap: 7px; margin-top: 7px; font-size: 10.5px; color: var(--tx3); }
+  .kind { border-radius: 3px; padding: 1px 6px; font-size: 10px; letter-spacing: .02em; }
+  .kind.cmd { color: var(--amber); background: var(--amberbg); }
+  .kind.file { color: var(--green); background: rgba(70,184,92,.1); }
+  .win[data-theme="light"] .kind.file { background: #EDF8F0; }
+  .qi-meta .tid { font-family: "Cascadia Code", Consolas, monospace; }
+  .qsep { display: flex; align-items: center; justify-content: space-between; padding: 13px 16px 8px;
+          font-size: 10px; color: var(--tx3); letter-spacing: .1em; }
+  .qsep span { font-family: "Cascadia Code", Consolas, monospace; letter-spacing: 0; }
+  .qp { display: flex; align-items: center; gap: 8px; padding: 7px 16px; font-size: 11px; color: var(--tx3); }
+  .qp .tm { font-family: "Cascadia Code", Consolas, monospace; font-size: 10px; color: var(--tx3);
+             flex: none; white-space: nowrap; }
+  .qp .ti { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            color: var(--tx2); font-size: 11.5px; }
+  .qp .rs { font-size: 10.5px; flex: none; white-space: nowrap; }
+  .qp .rs.ok { color: var(--green); }
+  .qp .rs.no { color: var(--red); opacity: .85; }
+  .qmeta { margin-top: auto; border-top: 1px solid var(--line); padding: 12px 16px 14px;
+           display: flex; gap: 20px; }
+  .qmeta span { display: block; font-size: 9.5px; color: var(--tx3); letter-spacing: .09em; }
+  .qmeta b { display: block; margin-top: 5px; font-size: 11.5px; font-weight: 400; color: var(--tx2);
+             font-family: "Cascadia Code", Consolas, monospace; }
+
+  /* 详情列 */
+  .detail { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+  .dhead { flex: none; padding: 16px 26px 14px; border-bottom: 1px solid var(--line); }
+  .drow { display: flex; align-items: center; gap: 9px; }
+  .dhead h2 { font-size: 19px; font-weight: 600; letter-spacing: -.015em; }
+  .pill { font-size: 10.5px; letter-spacing: .04em; color: var(--amber); background: var(--amberbg);
+          border-radius: 3px; padding: 3px 7px; }
+  .dmeta { display: flex; align-items: center; gap: 7px; margin-top: 8px;
+           font-size: 11.5px; color: var(--tx3); }
+  .dmeta .sep { opacity: .5; }
+  .dmeta .id { font-family: "Cascadia Code", Consolas, monospace; font-size: 11px; }
+  .dbody { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 16px 26px 0; }
+
+  /* 审批区：左请求右事实 */
+  .ask { flex: none; display: flex; gap: 22px; align-items: flex-start; }
+  .ask-main { flex: 1; min-width: 0; }
+  .lbl { font-size: 10.5px; color: var(--tx3); letter-spacing: .09em; }
+  .code { margin-top: 8px; background: var(--code); border: 1px solid var(--line);
+          border-left: 2px solid var(--amber); border-radius: 5px;
+          padding: 11px 14px; font-family: "Cascadia Code", Consolas, monospace;
+          font-size: 12.5px; line-height: 1.7; color: var(--tx2); white-space: pre; }
+  .note { margin-top: 9px; font-size: 11.5px; color: var(--tx3); line-height: 1.6; }
+  .facts { width: 232px; flex: none; display: grid; grid-template-columns: 1fr 1fr; gap: 1px;
+           background: var(--line2); border: 1px solid var(--line2); border-radius: 5px; overflow: hidden; }
+  .facts div { background: var(--panel); padding: 9px 11px; }
+  .facts span { display: block; font-size: 9.5px; color: var(--tx3); letter-spacing: .07em; }
+  .facts b { display: block; margin-top: 4px; font-size: 11.5px; font-weight: 400; color: var(--tx2);
+             font-family: "Cascadia Code", Consolas, monospace; }
+
+  /* 执行轨迹（取自 2 的常驻日志） */
+  .logwrap { flex: 1; display: flex; flex-direction: column; min-height: 0; margin-top: 14px;
+             border-top: 1px solid var(--line); }
+  .loghead { flex: none; height: 34px; display: flex; align-items: center; gap: 8px;
+             font-size: 11px; color: var(--tx2); }
+  .loghead .nm { font-size: 11.5px; color: var(--tx); }
+  .loghead .rid { font-family: "Cascadia Code", Consolas, monospace; font-size: 10.5px; color: var(--tx3); }
+  .loghead .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .live { display: flex; align-items: center; gap: 5px; font-size: 10px; letter-spacing: .06em;
+          color: var(--green); background: rgba(70,184,92,.1); border-radius: 2px; padding: 2px 6px; }
+  .win[data-theme="light"] .live { background: #EDF8F0; }
+  .live i { width: 5px; height: 5px; border-radius: 50%; background: var(--green); }
+  .follow { font-size: 10.5px; color: var(--tx3); }
+  .log { flex: 1; min-height: 0; display: flex; flex-direction: column; justify-content: flex-end;
+         gap: 1px; padding-bottom: 6px; font-family: "Cascadia Code", Consolas, monospace;
+         font-size: 11.5px; line-height: 1.72; color: var(--tx2); overflow: hidden; }
+  .ln { display: flex; gap: 11px; }
+  .ln .t { width: 54px; flex: none; color: var(--tx3); font-size: 10.5px; padding-top: 1px; }
+  .ln .m { flex: 1; min-width: 0; white-space: pre; }
+  .ln .m em { font-style: normal; color: var(--tx); }
+  .ln .m s { text-decoration: none; color: var(--tx3); }
+  .ln.w { color: var(--amber); }
+  .ln.w .m em { color: var(--amber); }
+  .cur { display: inline-block; width: 6px; height: 12px; background: var(--tx3); opacity: .7;
+         vertical-align: -1px; }
+
+  .dfoot { flex: none; height: 56px; display: flex; align-items: center; justify-content: space-between;
+           gap: 14px; padding: 0 26px; border-top: 1px solid var(--line); background: var(--panel); }
+  .dfoot .hint { font-size: 11px; color: var(--tx3); }
+  .acts { display: flex; gap: 8px; }
+  .btn { height: 32px; padding: 0 15px; border-radius: 5px; font-family: inherit; font-size: 12.5px;
+         font-weight: 500; border: 1px solid var(--line); background: transparent; color: var(--tx2); }
+  .btn.ghost { color: var(--red); border-color: color-mix(in srgb, var(--red) 34%, transparent); }
+  .btn.primary { background: var(--btn); border-color: var(--btn); color: #FFF;
+                 box-shadow: var(--shadow); font-weight: 600; }
+
+  /* 状态栏（取自 2） */
+  .status { height: 38px; flex: none; border-top: 1px solid var(--line); background: var(--bar);
+            display: flex; align-items: center; gap: 18px; padding: 0 14px;
+            font-family: "Cascadia Code", Consolas, monospace; font-size: 10.5px; color: var(--tx3); }
+  .status .right { margin-left: auto; display: flex; gap: 18px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-task" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10 6h10M10 12h10M10 18h10"/><path d="M3.5 6l1.2 1.2L7 5"/><path d="M3.5 12l1.2 1.2L7 11"/><path d="M3.5 18l1.2 1.2L7 17"/>
+  </symbol>
+  <symbol id="i-dev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2.5" y="4" width="19" height="12.5" rx="1.8"/><path d="M8.5 20h7"/><path d="M12 16.5V20"/>
+  </symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3 7.5A1.5 1.5 0 014.5 6h4l2 2h7A1.5 1.5 0 0119 9.5v8A1.5 1.5 0 0117.5 19h-13A1.5 1.5 0 013 17.5z"/>
+  </symbol>
+  <symbol id="i-log" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4.5" width="18" height="15" rx="2"/><path d="M7.5 10l2.2 2-2.2 2"/><path d="M12.5 14h4"/>
+  </symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="3"/>
+    <path d="M12 3.2v1.9M12 18.9v1.9M4.8 12H2.9M21.1 12h-1.9M6.9 6.9L5.6 5.6M18.4 18.4l-1.3-1.3M17.1 6.9l1.3-1.3M5.6 18.4l1.3-1.3"/>
+  </symbol>
+</svg>
+
+<div class="shell">
+  <div class="intro">
+    <h1>任务审核页 · 合并方案（1 + 2）</h1>
+    <p>主轴来自 <b>1 收件箱</b>：图标栏 + 队列 + 详情，主从关系明确，审批完自动落到下一条。补进 <b>2 控制台</b> 的两样东西：顶部<b>设备带</b>（解决多机混排）与详情区<b>常驻执行轨迹</b>（不必再切到日志页）。这一屏同时是后续所有页面的应用外壳。</p>
+  </div>
+
+  <div class="bar">
+    <span class="lbl">主题</span>
+    <button class="sw on" data-theme="dark">深色（默认）</button>
+    <button class="sw" data-theme="light">浅色</button>
+    <span class="hint">结构已锁定，主题只是变量切换 · 按 1 / 2 切换</span>
+  </div>
+
+  <div class="viewport"><div class="frame">
+    <div class="win" id="win" data-theme="dark">
+
+      <!-- 顶栏：设备带 -->
+      <div class="top">
+        <span class="mark"></span>
+        <span class="brand">AGENTDECK</span>
+        <div class="devs">
+          <div class="dt on"><i class="dot ok"></i><span class="nm">DESKTOP-8F2A</span><span class="n">2</span></div>
+          <div class="dt"><i class="dot ok"></i><span class="nm">LAPTOP-K3</span><span class="n">1</span></div>
+          <div class="dt"><i class="dot off"></i><span class="nm">HOME-NUC</span></div>
+        </div>
+        <div class="right"><i class="dot ok"></i>RELAY · 28ms<span class="winbtns">— □ ×</span></div>
+      </div>
+
+      <div class="body">
+        <!-- 图标栏 -->
+        <nav class="rail">
+          <div class="ic on"><svg><use href="#i-task"/></svg><span class="n">3</span></div>
+          <div class="ic"><svg><use href="#i-dev"/></svg></div>
+          <div class="ic"><svg><use href="#i-folder"/></svg></div>
+          <div class="ic"><svg><use href="#i-log"/></svg></div>
+          <div class="sp"></div>
+          <div class="ic"><svg><use href="#i-gear"/></svg></div>
+        </nav>
+
+        <!-- 队列 -->
+        <div class="queue">
+          <div class="qhead"><div><b>待审核</b><span class="c">3</span></div><span class="rf">刷新</span></div>
+
+          <div class="qi on">
+            <div class="qi-top"><span class="dev">A</span><span>web-app</span><span class="tm">2 分钟</span></div>
+            <div class="qi-ttl">运行 npm test</div>
+            <div class="qi-meta"><span class="kind cmd">命令</span><span class="tid">3f2a91</span></div>
+          </div>
+
+          <div class="qi">
+            <div class="qi-top"><span class="dev">A</span><span>web-app</span><span class="tm">4 分钟</span></div>
+            <div class="qi-ttl">写入 src/api/client.ts</div>
+            <div class="qi-meta"><span class="kind file">文件</span><span class="tid">8b10cc</span></div>
+          </div>
+
+          <div class="qi">
+            <div class="qi-top"><span class="dev">B</span><span>infra</span><span class="tm">6 分钟</span></div>
+            <div class="qi-ttl">运行 terraform plan</div>
+            <div class="qi-meta"><span class="kind cmd">命令</span><span class="tid">5d77e0</span></div>
+          </div>
+
+          <div class="qsep">今天已处理<span>12</span></div>
+          <div class="qp"><span class="tm">20:31</span><span class="ti">pnpm lint --fix</span><span class="rs ok">已批</span></div>
+          <div class="qp"><span class="tm">20:12</span><span class="ti">git status --short</span><span class="rs ok">已批</span></div>
+          <div class="qp"><span class="tm">19:48</span><span class="ti">删除 dist/ 缓存目录</span><span class="rs no">已拒</span></div>
+          <div class="qp"><span class="tm">19:20</span><span class="ti">npx tsc --noEmit</span><span class="rs ok">已批</span></div>
+          <div class="qp"><span class="tm">18:55</span><span class="ti">git push origin main</span><span class="rs no">已拒</span></div>
+          <div class="qp"><span class="tm">18:30</span><span class="ti">读取 package.json</span><span class="rs ok">已批</span></div>
+
+          <div class="qmeta">
+            <div><span>AGENT</span><b>0.1.0</b></div>
+            <div><span>CODEX</span><b>0.44.2</b></div>
+            <div><span>项目</span><b>2</b></div>
+          </div>
+        </div>
+
+        <!-- 详情 -->
+        <div class="detail">
+          <div class="dhead">
+            <div class="drow"><h2>运行 npm test</h2><span class="pill">待批准</span></div>
+            <div class="dmeta">
+              <span class="dev">A</span><span>web-app</span><span class="sep">/</span>
+              <span class="id">3f2a91d0</span><span class="sep">/</span>
+              <span>2 分钟前</span><span class="sep">/</span>
+              <span>来自 Pixel 8 · 手机端</span>
+            </div>
+          </div>
+
+          <div class="dbody">
+            <div class="ask">
+              <div class="ask-main">
+                <div class="lbl">请求内容</div>
+                <div class="code">cd C:\work\web-app
+npm test -- --runInBand</div>
+                <div class="note">批准后仅本次执行有效；沙箱与项目授权继续生效，超出项目目录的读写仍会被拒绝。</div>
+              </div>
+              <div class="facts">
+                <div><span>沙箱</span><b>read-only</b></div>
+                <div><span>审批策略</span><b>never</b></div>
+                <div><span>会话</span><b>sess-4f1c</b></div>
+                <div><span>请求 ID</span><b>3f2a91d0</b></div>
+              </div>
+            </div>
+
+            <div class="logwrap">
+              <div class="loghead">
+                <i class="dot ok"></i><span class="nm">执行轨迹</span><span class="rid">run 01</span>
+                <div class="right"><span class="follow">自动滚动</span><span class="live"><i></i>实时</span></div>
+              </div>
+              <div class="log">
+                <div class="ln"><span class="t">20:40:58</span><span class="m"><em>› 收到任务 3f2a91d0</em></span></div>
+                <div class="ln"><span class="t">20:40:58</span><span class="m">  device DESKTOP-8F2A · project web-app</span></div>
+                <div class="ln"><span class="t">20:40:59</span><span class="m">  session sess-4f1c · 恢复上次上下文</span></div>
+                <div class="ln"><span class="t">20:41:00</span><span class="m">  已授权目录 2 个 · 全部落在项目根内</span></div>
+                <div class="ln"><span class="t">20:41:01</span><span class="m"><em>› 启动 codex app-server 0.44.2</em></span></div>
+                <div class="ln"><span class="t">20:41:02</span><span class="m"><em>› 生成测试计划</em></span></div>
+                <div class="ln"><span class="t">20:41:04</span><span class="m">  读取 12 个测试文件 · 4 个用例文件</span></div>
+                <div class="ln"><span class="t">20:41:05</span><span class="m"><em>› 请求执行命令</em></span></div>
+                <div class="ln"><span class="t">20:41:05</span><span class="m">  npm test -- --runInBand</span></div>
+                <div class="ln"><span class="t">20:41:05</span><span class="m">  cwd C:\work\web-app</span></div>
+                <div class="ln"><span class="t">20:41:05</span><span class="m">  <s>sandbox</s>=read-only  <s>policy</s>=never  <s>ttl</s>=300s</span></div>
+                <div class="ln w"><span class="t">20:41:06</span><span class="m"><em>› 等待本机批准</em></span></div>
+                <div class="ln"><span class="t">20:41:06</span><span class="m">  request 3f2a91d0 queued · 等待中 <span class="cur"></span></span></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="dfoot">
+            <span class="hint">批准后立即在本机执行，并写入审计日志</span>
+            <div class="acts">
+              <button class="btn ghost">拒绝</button>
+              <button class="btn primary">批准一次</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="status">
+        <span>AGENT 0.1.0-lab</span><span>CODEX 0.44.2</span><span>今日已批 12</span>
+        <div class="right"><span>↑↓ 选择</span><span>A 批准</span><span>D 拒绝</span><span>TAB 设备</span></div>
+      </div>
+
+    </div>
+  </div></div>
+
+  <div class="caption">
+    <div><b>从 1 保留</b>主从结构：左边扫队列、右边做决定，批完自动落到下一条。图标栏让"待审 3"在任意页面都看得见。</div>
+    <div><b>从 2 保留</b>顶部设备带把多机维度提到全局，队列不再靠徽章混排；执行轨迹常驻详情区底部，读日志不用切页。</div>
+    <div><b>这一版修掉的</b>详情区把"请求"左右分成内容与事实两栏，日志因此拿到 800px 全宽，长命令行不会被折断。</div>
+    <div><b>外壳复用</b>52 图标栏 + 296 队列 + 详情 + 顶部设备带 + 底部状态栏，就是设备、项目、日志、设置四页的统一骨架。</div>
+  </div>
+</div>
+
+<script>
+  function fit() {
+    const vp = document.querySelector('.viewport');
+    const frame = document.querySelector('.frame');
+    const scale = Math.min(1, vp.clientWidth / 1120);
+    frame.style.transform = 'scale(' + scale + ')';
+    vp.style.height = (720 * scale) + 'px';
+  }
+  const win = document.getElementById('win');
+  const sws = Array.prototype.slice.call(document.querySelectorAll('.sw'));
+  function theme(name, write) {
+    win.setAttribute('data-theme', name);
+    sws.forEach(function (b) { b.classList.toggle('on', b.dataset.theme === name); });
+    if (write) history.replaceState(null, '', '#' + name);
+  }
+  sws.forEach(function (b) {
+    b.addEventListener('click', function () { theme(b.dataset.theme, true); });
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === '1') theme('dark', true);
+    if (e.key === '2') theme('light', true);
+  });
+  window.addEventListener('resize', fit);
+  const init = (location.hash || '').replace('#', '');
+  theme(init === 'light' ? 'light' : 'dark', false);
+  fit();
+</script>
+</body>
+</html>

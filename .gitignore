@@ -1,0 +1,61 @@
+# Android / Gradle
+.gradle/
+.kotlin/
+.cxx/
+.externalNativeBuild/
+build/
+local.properties
+captures/
+*.apk
+*.aab
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# Go / Node.js / TypeScript
+/bin/*
+# 例外：离屏 UI 截图管线是源码，不是产物
+!/bin/ui-smoke/
+/bin/ui-smoke/bin/
+/bin/ui-smoke/obj/
+/windows/**/bin/
+/windows/**/obj/
+*.exe
+*.test
+*.prof
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# 本机配置、密钥及运行数据
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.local.json
+*.local.toml
+*.local.yaml
+*.local.yml
+*.key
+*.pem
+*.p12
+*.pfx
+/secrets/
+/data/
+/.agentdeck-lab/
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+*.log
+
+# IDE / OS
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+Desktop.ini
