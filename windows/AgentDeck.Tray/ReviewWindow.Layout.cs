@@ -1,23 +1,34 @@
+using System.Diagnostics;
+using System.Drawing.Drawing2D;
+
 namespace AgentDeck.Tray;
 
+// Window shell and the status page. The shell is the three-part frame from
+// design/ui-v2.html: a 44px header, a 56px icon rail and a 34px status bar.
+// There are exactly three pages — 状态 / 任务 / 设置 — because every other
+// split (connection, projects, logs) duplicated something already on one of
+// them and cost the user a navigation step.
 internal sealed partial class ReviewWindow
 {
-    private readonly Panel content = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
-    private readonly Label status = DeckTheme.Label("就绪", DeckTheme.Small, DeckTheme.Muted);
-    private readonly Label connectionState = DeckTheme.Label("", DeckTheme.Section);
-    private readonly Label relayState = DeckTheme.Label("", DeckTheme.Body, DeckTheme.Muted);
-    private readonly Label phoneHint = DeckTheme.Label("", DeckTheme.Body, DeckTheme.Muted);
-    private readonly Label railState = DeckTheme.Label("", DeckTheme.Small);
-    private readonly Label inboxCount = DeckTheme.Label("任务队列", DeckTheme.Body, DeckTheme.Muted);
-    private readonly Label logTitle = DeckTheme.Label("任务日志", DeckTheme.Section);
-    private readonly TextBox logOutput = new()
+    private readonly Panel content = new()
     {
-        Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Both,
-        WordWrap = false, AccessibleName = "任务日志内容"
+        Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = DeckTheme.Canvas
     };
-    private readonly List<(Control View, Button Tab)> pages = [];
+    private readonly Label status = DeckTheme.Label("", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly Label statusService = DeckTheme.Label("服务 · 未运行", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly Label statusPending = DeckTheme.Label("待处理 0", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly Label statusCodex = DeckTheme.Label("CODEX —", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly Label statusInbox = DeckTheme.Label("INBOX 0", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly Label statusDevice = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly Label topState = DeckTheme.Label("未注册", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly DeckTheme.StatusDot topDot = DeckTheme.Dot(DeckTheme.Dim);
+    private readonly Label hostName = DeckTheme.Label(Environment.MachineName, DeckTheme.Body, DeckTheme.Ink);
+    private readonly Label hostId = DeckTheme.Label("未注册", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly List<(Control View, RailButton Tab)> pages = [];
+    private readonly List<string> connectionEvents = [];
+    private readonly System.Windows.Forms.Timer flashTimer = new() { Interval = 6000 };
+    private string? flashRestore;
     private Button pair = null!;
-    private int logPageIndex;
     private bool busy;
 
     private bool DeviceRegistered => File.Exists(Path.Combine(DeviceDirectory, "registered-device")) &&
@@ -30,56 +41,220 @@ internal sealed partial class ReviewWindow
         ClientSize = new Size(1120, 720);
         StartPosition = FormStartPosition.CenterScreen;
 
-        var shell = DeckTheme.Table();
-        shell.ColumnCount = 2;
-        shell.RowCount = 1;
-        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 194));
-        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        shell.Controls.Add(content, 1, 0);
-        var rail = DeckTheme.Table(new Padding(16, 23, 16, 16));
-        rail.BackColor = DeckTheme.Rail;
-        shell.Controls.Add(rail, 0, 0);
+        var shell = DeckTheme.Table(background: DeckTheme.Canvas);
+        DeckTheme.Row(shell, TopBar(), 44);
+        DeckTheme.Row(shell, Body(), 100, fill: true);
+        DeckTheme.Row(shell, StatusBar(), 34);
         Controls.Add(shell);
+        AddPage("状态", StatePage());
+        AddPage("任务", TasksPage());
+        AddPage("设置", SettingsPage());
 
-        var brand = DeckTheme.Label("AgentDeck", DeckTheme.Brand);
-        brand.Padding = new Padding(9, 0, 0, 0);
-        DeckTheme.Row(rail, brand, 37);
-        var deviceLabel = DeckTheme.Label(Environment.MachineName, DeckTheme.Small, DeckTheme.Muted);
-        deviceLabel.AutoEllipsis = true;
-        deviceLabel.Padding = new Padding(9, 0, 5, 0);
-        DeckTheme.Row(rail, deviceLabel, 25);
-        DeckTheme.Row(rail, new Panel(), 28);
-
-        AddPage(rail, "连接", ConnectionPage());
-        AddPage(rail, "任务", TasksPage());
-        AddPage(rail, "项目", ProjectsPage());
-        logPageIndex = pages.Count;
-        AddPage(rail, "日志", LogsPage());
-        AddPage(rail, "设置", SettingsPage());
-        DeckTheme.Row(rail, new Panel(), 100, fill: true);
-        railState.Padding = new Padding(9, 0, 0, 0);
-        DeckTheme.Row(rail, railState, 33);
-        SelectPage(0);
+        flashTimer.Tick += (_, _) =>
+        {
+            flashTimer.Stop();
+            if (flashRestore is not null) status.Text = flashRestore;
+            flashRestore = null;
+            status.ForeColor = DeckTheme.Dim;
+        };
+        FormClosed += (_, _) => flashTimer.Dispose();
 
         var monitor = new System.Windows.Forms.Timer { Interval = 2000 };
         monitor.Tick += (_, _) => UpdateConnection();
         Shown += (_, _) => monitor.Start();
         FormClosed += (_, _) => monitor.Dispose();
+        SelectPage(0);
     }
 
-    private void AddPage(TableLayoutPanel rail, string title, Control page)
+    private Control TopBar()
     {
-        int index = pages.Count;
-        var tab = DeckTheme.Button(title);
-        tab.AutoSize = false;
-        tab.MinimumSize = Size.Empty;
-        tab.Dock = DockStyle.Fill;
-        tab.Margin = new Padding(0, 0, 0, 5);
-        tab.TextAlign = ContentAlignment.MiddleLeft;
-        tab.Click += (_, _) => SelectPage(index);
-        DeckTheme.Row(rail, tab, 48);
-        pages.Add((page, tab));
+        var bar = new Panel { Dock = DockStyle.Fill, BackColor = DeckTheme.Bar, Margin = Padding.Empty };
+        bar.Controls.Add(new Panel { Dock = DockStyle.Bottom, Height = 1, BackColor = DeckTheme.Line });
+        var grid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Bar, Margin = Padding.Empty,
+            ColumnCount = 3, RowCount = 1, Padding = new Padding(14, 0, 14, 0)
+        };
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var brand = new FlowLayoutPanel
+        {
+            AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, BackColor = DeckTheme.Bar,
+            Margin = Padding.Empty, Padding = new Padding(0, 12, 0, 0)
+        };
+        brand.Controls.Add(new MarkControl { Size = new Size(14, 14), Margin = new Padding(0, 0, 8, 0) });
+        var name = DeckTheme.Label("AGENTDECK", DeckTheme.Brand);
+        name.AutoSize = true;
+        name.Dock = DockStyle.None;
+        name.Margin = new Padding(0, 1, 0, 0);
+        brand.Controls.Add(name);
+        grid.Controls.Add(brand, 0, 0);
+
+        var host = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, AutoSize = true, BackColor = DeckTheme.Bar, Margin = new Padding(14, 0, 0, 0),
+            ColumnCount = 3, RowCount = 1, Padding = new Padding(14, 0, 0, 0)
+        };
+        host.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1));
+        host.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        host.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        host.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        // A character rather than a 1px Panel: a Panel inside an AutoSize row
+        // collapses to zero height and its border lands above the text.
+        host.Controls.Add(new Panel { BackColor = DeckTheme.Bar, Width = 1, Margin = Padding.Empty }, 0, 0);
+        hostName.AutoSize = true;
+        hostName.Dock = DockStyle.None;
+        hostName.Margin = new Padding(0, 0, 8, 0);
+        host.Controls.Add(hostName, 1, 0);
+        hostId.AutoSize = true;
+        hostId.Dock = DockStyle.None;
+        hostId.Margin = new Padding(0, 1, 0, 0);
+        host.Controls.Add(hostId, 2, 0);
+        grid.Controls.Add(host, 1, 0);
+
+        var right = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Bar, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 1
+        };
+        right.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        right.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        right.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        topDot.Dock = DockStyle.None;
+        topDot.Anchor = AnchorStyles.Right;
+        topDot.Margin = new Padding(0, 0, 8, 0);
+        right.Controls.Add(topDot, 0, 0);
+        topState.TextAlign = ContentAlignment.MiddleRight;
+        topState.AutoEllipsis = true;
+        right.Controls.Add(topState, 1, 0);
+        grid.Controls.Add(right, 2, 0);
+        bar.Controls.Add(grid);
+        return bar;
+    }
+
+    private Control Body()
+    {
+        var body = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Canvas, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 1
+        };
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 56));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        body.Controls.Add(Rail(), 0, 0);
+        body.Controls.Add(content, 1, 0);
+        return body;
+    }
+
+    private Control Rail()
+    {
+        var rail = new Panel { Dock = DockStyle.Fill, BackColor = DeckTheme.Bar, Margin = Padding.Empty };
+        rail.Controls.Add(new Panel { Dock = DockStyle.Right, Width = 1, BackColor = DeckTheme.Line });
+        var list = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Bar, Margin = Padding.Empty,
+            ColumnCount = 1, RowCount = 1, Padding = new Padding(10, 9, 10, 6)
+        };
+        list.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        AddRail(list, "状态", RailIcon.Status, out var stateTab);
+        AddRail(list, "任务", RailIcon.Task, out var taskTab);
+        AddRail(list, "设置", RailIcon.Settings, out var settingsTab);
+        DeckTheme.Row(list, new Panel { BackColor = DeckTheme.Bar }, 100, fill: true);
+        railStatus.Dock = DockStyle.None;
+        railStatus.Anchor = AnchorStyles.None;
+        railStatus.Margin = new Padding(0, 0, 0, 6);
+        DeckTheme.Row(list, railStatus, 24);
+        rail.Controls.Add(list);
+        return rail;
+    }
+
+    private void AddRail(TableLayoutPanel rail, string title, RailIcon icon, out RailButton button)
+    {
+        var created = new RailButton(icon, title);
+        created.Click += (_, _) => SelectPage(pages.FindIndex(p => p.Tab == created));
+        var tip = new ToolTip();
+        tip.SetToolTip(created, title);
+        DeckTheme.Row(rail, created, 40);
+        pages.Add((new Panel { Visible = false }, created));
+        button = created;
+    }
+
+    private Control StatusBar()
+    {
+        var bar = new Panel { Dock = DockStyle.Fill, BackColor = DeckTheme.Bar, Margin = Padding.Empty };
+        bar.Controls.Add(new Panel { Dock = DockStyle.Top, Height = 1, BackColor = DeckTheme.Line });
+        var grid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Bar, Margin = Padding.Empty,
+            ColumnCount = 4, RowCount = 1, Padding = new Padding(14, 0, 14, 0)
+        };
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        statusService.AutoSize = true;
+        statusService.Dock = DockStyle.None;
+        statusService.Margin = new Padding(0, 1, 18, 0);
+        grid.Controls.Add(statusService, 0, 0);
+        status.AutoEllipsis = true;
+        status.Margin = new Padding(0, 1, 18, 0);
+        grid.Controls.Add(status, 1, 0);
+        statusPending.AutoSize = true;
+        statusPending.Dock = DockStyle.None;
+        statusPending.Margin = new Padding(0, 1, 18, 0);
+        grid.Controls.Add(statusPending, 2, 0);
+
+        var right = new FlowLayoutPanel
+        {
+            AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, BackColor = DeckTheme.Bar,
+            Margin = Padding.Empty, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(0, 1, 0, 0)
+        };
+        foreach (var label in new[] { statusCodex, statusInbox, statusDevice })
+        {
+            label.AutoSize = true;
+            label.Dock = DockStyle.None;
+            label.Margin = new Padding(0, 0, 18, 0);
+            right.Controls.Add(label);
+        }
+        grid.Controls.Add(right, 3, 0);
+        bar.Controls.Add(grid);
+        return bar;
+    }
+
+    private Control Page(string title, string description, Control body, Control? aside = null)
+    {
+        var page = DeckTheme.Table(new Padding(24, 18, 24, 0), DeckTheme.Canvas);
+        var head = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Canvas, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 1
+        };
+        head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        head.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var text = DeckTheme.Table(background: DeckTheme.Canvas);
+        DeckTheme.Row(text, DeckTheme.Label(title, DeckTheme.Heading), 30);
+        DeckTheme.Row(text, DeckTheme.Label(description, DeckTheme.Small, DeckTheme.Dim), 20);
+        head.Controls.Add(text, 0, 0);
+        if (aside is not null) head.Controls.Add(aside, 1, 0);
+        DeckTheme.Row(page, head, 54);
+        DeckTheme.Row(page, new Panel { BackColor = DeckTheme.Canvas }, 16);
+        DeckTheme.Row(page, body, 100, fill: true);
+        DeckTheme.Row(page, new Panel { BackColor = DeckTheme.Canvas }, 18);
+        return page;
+    }
+
+    private void AddPage(string title, Control page)
+    {
+        int index = pages.FindIndex(p => p.Tab.Text == title);
+        (Control View, RailButton Tab) entry = pages[index];
+        pages[index] = (page, entry.Tab);
         content.Controls.Add(page);
         page.Visible = false;
     }
@@ -92,219 +267,171 @@ internal sealed partial class ReviewWindow
             var (view, tab) = pages[i];
             bool selected = i == index;
             view.Visible = selected;
-            tab.BackColor = selected ? DeckTheme.Active : DeckTheme.Rail;
-            tab.ForeColor = selected ? DeckTheme.Accent : DeckTheme.Muted;
-            tab.FlatAppearance.BorderColor = selected ? DeckTheme.Active : DeckTheme.Rail;
-            tab.AccessibleDescription = selected ? "当前页面" : "";
+            tab.Selected = selected;
         }
         content.ResumeLayout();
     }
 
-    private TableLayoutPanel Page(string title, string description, Control body)
+    // One card: a one-pixel frame around a header row and whatever body rows the
+    // caller appends. Cards never draw a drop shadow; separation comes from the
+    // hairline and the 14px gap.
+    private static Control Card(string title, out TableLayoutPanel body,
+        string? count = null, string? note = null, Control? action = null)
     {
-        var page = DeckTheme.Table(new Padding(32, 22, 32, 10));
-        DeckTheme.Row(page, DeckTheme.Label(title, DeckTheme.Heading), 52);
-        DeckTheme.Row(page, DeckTheme.Label(description, DeckTheme.Body, DeckTheme.Muted), 31);
-        DeckTheme.Row(page, new Panel(), 20);
-        DeckTheme.Row(page, body, 100, fill: true);
-        var feedback = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Muted);
-        status.TextChanged += (_, _) => feedback.Text = status.Text;
-        feedback.Text = status.Text;
-        feedback.Padding = new Padding(0, 6, 0, 0);
-        feedback.AccessibleName = "操作状态";
-        feedback.LiveSetting = System.Windows.Forms.Automation.AutomationLiveSetting.Polite;
-        feedback.VisibleChanged += (_, _) => feedback.Text = status.Text;
-        DeckTheme.Row(page, feedback, 52);
-        return page;
-    }
-
-    private static TableLayoutPanel Card()
-    {
-        var card = DeckTheme.Table(new Padding(22, 16, 22, 16));
-        card.BackColor = DeckTheme.Surface;
-        return card;
-    }
-
-    private Control ConnectionPage()
-    {
-        var body = DeckTheme.Table();
-        body.ColumnCount = 3;
-        body.RowCount = 2;
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 16));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
-        body.RowStyles.Add(new RowStyle(SizeType.Absolute, 176));
-        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var connection = Card();
-        connection.Margin = Padding.Empty;
-        DeckTheme.Row(connection, connectionState, 36);
-        DeckTheme.Row(connection, relayState, 62);
-        var serverActions = DeckTheme.Actions();
-        AddAction(serverActions, "配置云服务器", ConfigureRelayAsync, primary: true);
-        DeckTheme.Row(connection, serverActions, 40);
-        body.Controls.Add(connection, 0, 0);
-
-        var phone = Card();
-        DeckTheme.Row(phone, DeckTheme.Label("配对手机", DeckTheme.Section), 36);
-        DeckTheme.Row(phone, phoneHint, 62);
-        var phoneActions = DeckTheme.Actions();
-        pair = AddAction(phoneActions, "显示配对二维码", PairPhoneAsync);
-        DeckTheme.Row(phone, phoneActions, 40);
-        body.Controls.Add(phone, 2, 0);
-        return Page("连接", "注册这台电脑并配对 Android 设备。", body);
-    }
-
-    private Control TasksPage()
-    {
-        var body = Card();
-        var actions = DeckTheme.Actions();
-        AddAction(actions, "刷新队列", RefreshInboxAsync, primary: true);
-        var preview = AddAction(actions, "查看任务", () =>
+        body = DeckTheme.Table(new Padding(16, 0, 16, 12), DeckTheme.Surface);
+        DeckTheme.Row(body, DeckTheme.CardHeader(title, count, note,
+            action is null ? [] : [action]), 40);
+        var frame = new Panel
         {
-            detail.Text = FormatPreview(Selected());
-            return Task.CompletedTask;
-        });
-        var cancel = AddAction(actions, "叫停任务", CancelAsync);
-        void UpdateSelection()
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Padding = new Padding(1), Margin = Padding.Empty
+        };
+        frame.Paint += (_, e) =>
         {
-            preview.Enabled = cancel.Enabled = pending.SelectedIndex >= 0;
+            using var pen = new Pen(DeckTheme.Line);
+            e.Graphics.DrawRectangle(pen, 0, 0, frame.Width - 1, frame.Height - 1);
+        };
+        frame.Controls.Add(body);
+        return frame;
+    }
+
+    private static Control Metric(string caption, Label value)
+    {
+        var table = DeckTheme.Table(background: DeckTheme.Surface);
+        DeckTheme.Row(table, DeckTheme.Caption(caption), 18);
+        value.Font = DeckTheme.Monospace;
+        DeckTheme.Row(table, value, 22);
+        return table;
+    }
+
+    private static Control Legend(string key, Color color, string text)
+    {
+        var row = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 1
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 62));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var name = DeckTheme.Label(key, DeckTheme.Small, color);
+        name.Margin = new Padding(0, 0, 8, 0);
+        row.Controls.Add(name, 0, 0);
+        var detail = DeckTheme.Label(text, DeckTheme.Small, DeckTheme.Dim);
+        detail.AutoEllipsis = true;
+        row.Controls.Add(detail, 1, 0);
+        return row;
+    }
+
+    private sealed class MarkControl : Control
+    {
+        internal MarkControl()
+        {
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
+                     ControlStyles.UserPaint | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = Color.Transparent;
         }
-        pending.SelectedIndexChanged += (_, _) => UpdateSelection();
-        UpdateSelection();
-        DeckTheme.Row(body, actions, 46);
-        DeckTheme.Row(body, inboxCount, 28);
 
-        pending.BorderStyle = BorderStyle.None;
-        pending.BackColor = DeckTheme.Well;
-        pending.ForeColor = DeckTheme.Ink;
-        pending.Font = DeckTheme.Body;
-        pending.HorizontalScrollbar = true;
-        pending.IntegralHeight = false;
-        pending.Margin = Padding.Empty;
-        var list = new Panel { Dock = DockStyle.Fill, Padding = new Padding(12), BackColor = DeckTheme.Well };
-        list.Controls.Add(pending);
-        DeckTheme.Row(body, list, 35, fill: true);
-        DeckTheme.Row(body, DeckTheme.Label("任务详情", DeckTheme.Body, DeckTheme.Muted), 34);
-        DeckTheme.Row(body, DeckTheme.Reader(detail, "刷新待办后选择任务，即可查看请求内容。"), 65, fill: true);
-        return Page("任务", "查看这台电脑的任务队列与执行状态；审批在手机上完成。", body);
-    }
-
-    private Control ProjectsPage()
-    {
-        var body = Card();
-        var file = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Muted);
-        file.AutoEllipsis = true;
-        void UpdatePath() => file.Text = string.IsNullOrWhiteSpace(projects.Text)
-            ? "授权清单将在注册电脑后生成路径，也可在「设置」中指定。"
-            : projects.Text;
-        projects.TextChanged += (_, _) => UpdatePath();
-        UpdatePath();
-        DeckTheme.Row(body, DeckTheme.Label("本机项目授权", DeckTheme.Section), 38);
-        DeckTheme.Row(body, file, 32);
-        var buttons = DeckTheme.Actions();
-        AddAction(buttons, "管理项目", () =>
+        protected override void OnPaint(PaintEventArgs e)
         {
-            using var editor = new ProjectEditor(RequirePath(projects));
-            status.Text = editor.ShowDialog(this) == DialogResult.OK ? "项目授权已保存。" : "已取消。";
-            return Task.CompletedTask;
-        }, primary: true);
-        DeckTheme.Row(body, buttons, 40);
-        var wrapper = DeckTheme.Table();
-        DeckTheme.Row(wrapper, body, 146);
-        DeckTheme.Row(wrapper, new Panel(), 100, fill: true);
-        return Page("项目", "手机只能访问你在这台电脑上启用的项目。", wrapper);
-    }
-
-    private Control LogsPage()
-    {
-        var body = Card();
-        var actions = DeckTheme.Actions();
-        AddAction(actions, "打开任务日志", ViewLogAsync, primary: true);
-        AddAction(actions, "取消运行任务", CancelTaskAsync);
-        DeckTheme.Row(body, actions, 47);
-        DeckTheme.Row(body, logTitle, 37);
-        DeckTheme.Row(body, DeckTheme.Reader(logOutput, "打开一个任务日志以查看运行输出。"), 100, fill: true);
-        return Page("日志", "查看本机任务输出，或向正在运行的任务发送取消请求。", body);
-    }
-
-    private Control SettingsPage()
-    {
-        var body = Card();
-        body.AutoScroll = true;
-        // Detection lives inside the Codex row instead of its own section: the
-        // settings card has to keep the save button visible at the minimum
-        // window size, and an extra block pushed it out of view.
-        DeckTheme.Row(body, CodexPathField(), 63);
-        DeckTheme.Row(body, PathField("Codex 配置目录", home, true), 69);
-        DeckTheme.Row(body, PathField("项目授权清单", projects, false), 69);
-        DeckTheme.Row(body, PathField("任务收件箱", inbox, true), 69);
-        DeckTheme.Row(body, PathField("任务日志目录", logs, true), 69);
-        var actions = DeckTheme.Actions();
-        AddAction(actions, "保存设置", () =>
-        {
-            SavePaths();
-            return Task.CompletedTask;
-        }, primary: true);
-        DeckTheme.Row(body, new Panel(), 8);
-        DeckTheme.Row(body, actions, 40);
-        DeckTheme.Row(body, new Panel(), 100, fill: true);
-        return Page("设置", "路径留空时由 Agent 自动检测；检测不会覆盖你手填的路径。", body);
-    }
-
-    private void UpdateConnection()
-    {
-        bool registered = DeviceRegistered;
-        bool running = agent is { HasExited: false };
-        connectionState.Text = registered ? "这台电脑已注册" : "连接你的云服务器";
-        relayState.Text = registered
-            ? "设备身份已保存在本机。"
-            : "准备好 Relay 地址、证书指纹和注册令牌后，即可注册这台电脑。";
-        phoneHint.Text = registered
-            ? "在 Android 应用中扫码，然后在这台电脑上核对手机指纹。"
-            : "注册电脑后，即可用 Android 应用扫码配对。";
-        railState.Text = running ? "Agent 运行中" : registered ? "Agent 未运行" : "电脑未注册";
-        railState.ForeColor = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Muted;
-        pair.Enabled = registered;
-        pair.Visible = registered;
-    }
-
-    internal Task OpenLogsAndCancelTaskAsync()
-    {
-        SelectPage(logPageIndex);
-        return RunActionAsync(CancelTaskAsync);
-    }
-
-    private Button AddAction(FlowLayoutPanel row, string label, Func<Task> action, bool primary = false)
-    {
-        var button = DeckTheme.Button(label, primary);
-        button.Click += async (_, _) => await RunActionAsync(action);
-        row.Controls.Add(button);
-        return button;
-    }
-
-    private async Task RunActionAsync(Func<Task> action)
-    {
-        if (busy) return;
-        busy = true;
-        content.Enabled = false;
-        status.Text = "正在处理…";
-        try
-        {
-            await action();
-            if (!IsDisposed && status.Text == "正在处理…")
-                status.Text = "操作完成。";
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            using var brush = new LinearGradientBrush(ClientRectangle,
+                DeckTheme.Accent, Color.FromArgb(138, 101, 25), 45f);
+            e.Graphics.FillRectangle(brush, ClientRectangle);
         }
-        catch (Exception error)
+    }
+
+    private enum RailIcon { Status, Task, Settings }
+
+    private sealed class RailButton : Control
+    {
+        private readonly RailIcon icon;
+        private bool selected;
+        private int badge;
+
+        internal RailButton(RailIcon icon, string text)
         {
-            if (!IsDisposed) status.Text = error.Message;
+            this.icon = icon;
+            Text = text;
+            AccessibleName = text;
+            Margin = new Padding(0, 0, 0, 2);
+            Cursor = Cursors.Hand;
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
+                     ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            BackColor = DeckTheme.Bar;
         }
-        finally
+
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        internal bool Selected
         {
-            busy = false;
-            if (!IsDisposed)
+            get => selected;
+            set { selected = value; Invalidate(); }
+        }
+
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        internal int Badge
+        {
+            get => badge;
+            set { badge = value; Invalidate(); }
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            using (var background = new SolidBrush(selected ? DeckTheme.Surface2 : DeckTheme.Bar))
+                g.FillRectangle(background, ClientRectangle);
+            var color = selected ? DeckTheme.Ink : DeckTheme.Dim;
+            var origin = new Point((Width - 20) / 2, (Height - 20) / 2);
+            using var pen = new Pen(color, 1.35f) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+            switch (icon)
             {
-                content.Enabled = true;
-                UpdateConnection();
+                case RailIcon.Status:
+                    g.DrawLines(pen,
+                    [
+                        new PointF(origin.X + 2, origin.Y + 11), new PointF(origin.X + 6, origin.Y + 11),
+                        new PointF(origin.X + 8.5f, origin.Y + 4), new PointF(origin.X + 11.5f, origin.Y + 16),
+                        new PointF(origin.X + 14, origin.Y + 9), new PointF(origin.X + 18, origin.Y + 9)
+                    ]);
+                    break;
+                case RailIcon.Task:
+                    for (int i = 0; i < 3; i++)
+                    {
+                        float y = origin.Y + 6 + i * 4.5f;
+                        using var fill = new SolidBrush(color);
+                        g.FillRectangle(fill, origin.X + 2, y - 1.4f, 2.6f, 2.6f);
+                        g.DrawLine(pen, origin.X + 7.5f, y, origin.X + 18, y);
+                    }
+                    break;
+                default:
+                    var center = new PointF(origin.X + 10, origin.Y + 10);
+                    g.DrawEllipse(pen, center.X - 5.4f, center.Y - 5.4f, 10.8f, 10.8f);
+                    g.DrawEllipse(pen, center.X - 1.8f, center.Y - 1.8f, 3.6f, 3.6f);
+                    for (int i = 0; i < 8; i++)
+                    {
+                        double angle = Math.PI * i / 4;
+                        g.DrawLine(pen,
+                            center.X + (float)(Math.Cos(angle) * 5.6), center.Y + (float)(Math.Sin(angle) * 5.6),
+                            center.X + (float)(Math.Cos(angle) * 8.2), center.Y + (float)(Math.Sin(angle) * 8.2));
+                    }
+                    break;
+            }
+            if (selected)
+            {
+                using var accent = new SolidBrush(DeckTheme.Accent);
+                g.FillRectangle(accent, 0, 9, 2, Height - 18);
+            }
+            if (badge > 0)
+            {
+                var text = badge > 9 ? "9+" : badge.ToString();
+                var width = text.Length > 1 ? 17 : 13;
+                using var fill = new SolidBrush(DeckTheme.Accent);
+                g.FillRectangle(fill, Width - width - 2, 2, width, 13);
+                using var font = new Font("Consolas", 7F, FontStyle.Bold);
+                TextRenderer.DrawText(g, text, font, new Rectangle(Width - width - 2, 2, width, 13),
+                    Color.FromArgb(23, 19, 10), TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
             }
         }
     }

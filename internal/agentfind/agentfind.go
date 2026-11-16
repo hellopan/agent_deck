@@ -5,10 +5,14 @@
 package agentfind
 
 import (
+	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"time"
 )
 
 // Tool names as they appear in configuration and in the detection report.
@@ -26,6 +30,7 @@ type Tool struct {
 	Path    string `json:"path,omitempty"`
 	Source  string `json:"source,omitempty"`
 	Usable  bool   `json:"usable"`
+	Version string `json:"version,omitempty"`
 	Problem string `json:"problem,omitempty"`
 }
 
@@ -63,14 +68,37 @@ func Detect(name, hint string) Tool {
 	return Tool{Name: name, Problem: "没有找到安装位置，请手动指定可执行文件"}
 }
 
-// DetectAll reports on every supported tool in a stable order.
+// DetectAll reports on every supported tool in a stable order. Only Codex gets
+// a version: it has a stable --version output, and the settings page needs it
+// to tell "installed" apart from "installed and this build". Running a tool is
+// deliberately kept out of Detect, since the agent calls that on every start.
 func DetectAll(codexHint string) []Tool {
 	tools := []Tool{
 		Detect(Codex, codexHint),
 		Detect(Cursor, ""),
 		Detect(WorkBuddy, ""),
 	}
+	if tools[0].Usable {
+		tools[0].Version = readVersion(tools[0].Path)
+	}
 	return tools
+}
+
+var versionPattern = regexp.MustCompile(`\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.]+)?`)
+
+// readVersion asks the executable for its own version. A tool that exits
+// non-zero or prints nothing gets an empty version instead of a detection
+// failure: the path is still correct, and the page simply omits the number.
+func readVersion(executable string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, executable, "--version")
+	hideWindow(cmd)
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return versionPattern.FindString(string(output))
 }
 
 func inspect(name, path, source string) Tool {
