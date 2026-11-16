@@ -9,19 +9,19 @@ namespace AgentDeck.Tray;
 // nothing measures them yet, and an invented number is worse than a gap.
 internal sealed partial class ReviewWindow
 {
-    private readonly DeckTheme.StatusDot channelDot = DeckTheme.Dot(DeckTheme.Dim);
-    private readonly DeckTheme.StatusDot railStatus = DeckTheme.Dot(DeckTheme.Dim, 7);
+    private readonly DeckTheme.StatusDot channelDot = DeckTheme.Dot(DeckTheme.Dim, 7);
     private readonly Label channelTitle = DeckTheme.Label("未注册", DeckTheme.Hero);
-    private readonly Label channelAddr = DeckTheme.Label("", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly Label channelAddr = DeckTheme.Label("", DeckTheme.MonoSmall, DeckTheme.Dim);
     private readonly Label channelSince = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
-    private readonly Label metricUptime = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Ink);
-    private readonly Label metricDevice = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Ink);
-    private readonly Label metricRegistered = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Ink);
-    private readonly Label identityMachine = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
-    private readonly Label identityDevice = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
-    private readonly Label identityRegistered = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
-    private readonly Label identityRelay = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
-    private readonly Label asidePending = DeckTheme.Label("0", DeckTheme.Monospace, DeckTheme.Muted);
+    private readonly Label metricUptime = DeckTheme.Label("—", DeckTheme.MonoHero, DeckTheme.Muted);
+    private readonly Label metricDevice = DeckTheme.Label("—", DeckTheme.MonoHero, DeckTheme.Muted);
+    private readonly Label metricRegistered = DeckTheme.Label("—", DeckTheme.MonoHero, DeckTheme.Muted);
+    private readonly Label identityMachine = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly Label identityDevice = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly Label identityRegistered = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly Label identityRelay = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly Label asideVersion = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
+    private readonly Label asideUptime = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
     private readonly FlowLayoutPanel pairedList = new()
     {
         Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
@@ -32,6 +32,8 @@ internal sealed partial class ReviewWindow
         Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
         FlowDirection = FlowDirection.TopDown, WrapContents = false
     };
+    private Control pairedEmpty = null!;
+    private readonly Label pairHint = DeckTheme.Label("同一时间只允许一个配对请求", DeckTheme.Tiny, DeckTheme.Dim);
     private string pairedSignature = "\0";
     private string eventSignature = "\0";
 
@@ -42,11 +44,11 @@ internal sealed partial class ReviewWindow
             Dock = DockStyle.Fill, BackColor = DeckTheme.Canvas, Margin = Padding.Empty,
             ColumnCount = 3, RowCount = 1
         };
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 14));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 57));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 16));
+        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 43));
         body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        body.Controls.Add(ChannelCard(), 0, 0);
+        body.Controls.Add(StateMain(), 0, 0);
         body.Controls.Add(new Panel { BackColor = DeckTheme.Canvas }, 1, 0);
         body.Controls.Add(StateSide(), 2, 0);
         return Page("状态", "这台电脑的远程通道、身份与已配对设备。", body, StateAside());
@@ -54,44 +56,44 @@ internal sealed partial class ReviewWindow
 
     private Control StateAside()
     {
-        var aside = new FlowLayoutPanel
+        var aside = new TableLayoutPanel
         {
-            AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, BackColor = DeckTheme.Canvas,
-            Margin = Padding.Empty, FlowDirection = FlowDirection.LeftToRight, Padding = new Padding(0, 4, 0, 0)
+            AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill,
+            BackColor = DeckTheme.Canvas, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1
         };
-        aside.Controls.Add(AsideItem("待处理", "0", asidePending));
+        aside.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        aside.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        aside.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        aside.Controls.Add(AsideItem("CODEX", asideVersion), 0, 0);
+        aside.Controls.Add(AsideItem("已运行", asideUptime), 1, 0);
         return aside;
-    }
-
-    private static Control AsideItem(string caption, string fallback, Label value)
-    {
-        var table = DeckTheme.Table(background: DeckTheme.Canvas);
-        DeckTheme.Row(table, DeckTheme.Caption(caption), 16);
-        value.Text = fallback;
-        value.TextAlign = ContentAlignment.MiddleRight;
-        DeckTheme.Row(table, value, 18);
-        table.Width = 74;
-        table.Margin = new Padding(0, 0, 0, 0);
-        table.Dock = DockStyle.None;
-        table.AutoSize = true;
-        return table;
     }
 
     private Control ChannelCard()
     {
         var card = Card("通道", out var body);
 
+        var configure = DeckTheme.Button("配置云服务器", primary: true);
+        configure.Margin = Padding.Empty;
+        configure.Anchor = AnchorStyles.None;
+        configure.MinimumSize = new Size(0, 30);
+        configure.Click += async (_, _) => await RunActionAsync(ConfigureRelayAsync);
+
+        // Hero: state word, endpoint and the one action that changes the state,
+        // on the same line. The action used to sit at the bottom of a tall card,
+        // hundreds of pixels away from the status it acts on.
         var hero = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 2, RowCount = 1
+            ColumnCount = 3, RowCount = 1
         };
-        hero.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        hero.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
         hero.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        hero.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         hero.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         channelDot.Dock = DockStyle.None;
         channelDot.Anchor = AnchorStyles.Left;
-        channelDot.Margin = new Padding(0, 2, 10, 0);
+        channelDot.Margin = new Padding(0, 2, 0, 0);
         hero.Controls.Add(channelDot, 0, 0);
         var titleLine = new TableLayoutPanel
         {
@@ -103,47 +105,76 @@ internal sealed partial class ReviewWindow
         titleLine.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         channelTitle.AutoSize = true;
         channelTitle.Dock = DockStyle.None;
-        channelTitle.Margin = new Padding(0, 0, 10, 0);
+        channelTitle.Margin = new Padding(0, 0, 12, 0);
         titleLine.Controls.Add(channelTitle, 0, 0);
         channelAddr.AutoEllipsis = true;
+        channelAddr.TextAlign = ContentAlignment.MiddleLeft;
         titleLine.Controls.Add(channelAddr, 1, 0);
         hero.Controls.Add(titleLine, 1, 0);
-        DeckTheme.Row(body, hero, 36);
+        hero.Controls.Add(configure, 2, 0);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 10);
+        DeckTheme.Row(body, hero, 38);
         DeckTheme.Row(body, channelSince, 24);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 12);
 
+        DeckTheme.Row(body, DeckTheme.Divider(), 1);
         var metrics = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 3, RowCount = 1
+            ColumnCount = 5, RowCount = 1
         };
-        for (int i = 0; i < 3; i++) metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33.3f));
+        metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
+        metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1));
+        metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
+        metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1));
+        metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
         metrics.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         metrics.Controls.Add(Metric("已运行", metricUptime), 0, 0);
-        metrics.Controls.Add(Metric("设备 ID", metricDevice), 1, 0);
-        metrics.Controls.Add(Metric("注册于", metricRegistered), 2, 0);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Line2, Height = 1 }, 1);
-        DeckTheme.Row(body, metrics, 52);
+        var div1 = DeckTheme.Divider();
+        div1.Margin = new Padding(0, 12, 0, 10);
+        metrics.Controls.Add(div1, 1, 0);
+        var middle = Metric("设备 ID", metricDevice);
+        middle.Margin = new Padding(16, 0, 0, 0);
+        metrics.Controls.Add(middle, 2, 0);
+        var div2 = DeckTheme.Divider();
+        div2.Margin = new Padding(0, 12, 0, 10);
+        metrics.Controls.Add(div2, 3, 0);
+        var last = Metric("注册于", metricRegistered);
+        last.Margin = new Padding(16, 0, 0, 0);
+        metrics.Controls.Add(last, 4, 0);
+        DeckTheme.Row(body, metrics, 72);
 
-        DeckTheme.Row(body, DeckTheme.Caption("三种状态的含义"), 26);
-        DeckTheme.Row(body, Legend("已就绪", DeckTheme.Good, "Agent 正在运行且已注册，手机此刻可以提交任务"), 24);
-        DeckTheme.Row(body, Legend("已停止", DeckTheme.Warning, "进程已退出。先重启托盘，再检查 Codex 是否可用"), 24);
-        DeckTheme.Row(body, Legend("未注册", DeckTheme.Dim, "还没有 Relay 身份。先配置云服务器，手机才能连接"), 24);
+        DeckTheme.Row(body, DeckTheme.Divider(), 1);
+        DeckTheme.Row(body, DeckTheme.Caption("三种状态的含义"), 34);
+        DeckTheme.Row(body, Legend("已就绪", DeckTheme.Good, "Agent 正在运行且已注册，手机此刻可以提交任务"), 28);
+        DeckTheme.Row(body, Legend("已停止", DeckTheme.Warning, "进程已退出，先重启托盘，再检查 Codex 是否可用"), 28);
+        DeckTheme.Row(body, Legend("未注册", DeckTheme.Dim, "还没有 Relay 身份，配置云服务器后手机才能连接"), 28);
 
-        DeckTheme.Row(body, DeckTheme.Caption("最近连接事件"), 26);
-        DeckTheme.Row(body, eventList, 70);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 100, fill: true);
+        return card;
+    }
 
-        var actions = DeckTheme.Actions(DeckTheme.Surface);
-        AddAction(actions, "配置云服务器", ConfigureRelayAsync, primary: true);
-        DeckTheme.Row(body, actions, 38);
+    private Control StateMain()
+    {
+        var main = DeckTheme.Table(background: DeckTheme.Canvas);
+        DeckTheme.Row(main, ChannelCard(), 332);
+        DeckTheme.Row(main, new Panel { BackColor = DeckTheme.Canvas }, 16);
+        DeckTheme.Row(main, EventsCard(), 100, fill: true);
+        return main;
+    }
+
+    private Control EventsCard()
+    {
+        var card = Card("最近连接事件", out var body, note: "只保留最近 4 条");
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 2);
+        DeckTheme.Row(body, eventList, 100, fill: true);
         return card;
     }
 
     private Control StateSide()
     {
         var side = DeckTheme.Table(background: DeckTheme.Canvas);
-        DeckTheme.Row(side, IdentityCard(), 176);
-        DeckTheme.Row(side, new Panel { BackColor = DeckTheme.Canvas }, 14);
+        DeckTheme.Row(side, IdentityCard(), 196);
+        DeckTheme.Row(side, new Panel { BackColor = DeckTheme.Canvas }, 16);
         DeckTheme.Row(side, PairedCard(), 100, fill: true);
         return side;
     }
@@ -151,38 +182,107 @@ internal sealed partial class ReviewWindow
     private Control IdentityCard()
     {
         var card = Card("本机身份", out var body, note: "用于手机识别这台电脑");
-        foreach (var (caption, value) in new[]
-                 {
-                     ("计算机名", identityMachine), ("设备 ID", identityDevice),
-                     ("注册于", identityRegistered), ("Relay", identityRelay)
-                 })
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 4);
+        var rows = new (string Caption, Label Value)[]
         {
+            ("计算机名", identityMachine), ("设备 ID", identityDevice),
+            ("注册于", identityRegistered), ("Relay", identityRelay)
+        };
+        for (int index = 0; index < rows.Length; index++)
+        {
+            var (caption, value) = rows[index];
             var row = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
                 ColumnCount = 2, RowCount = 1
             };
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
             row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            var key = DeckTheme.Label(caption, DeckTheme.Small, DeckTheme.Dim);
-            row.Controls.Add(key, 0, 0);
+            row.Controls.Add(DeckTheme.Label(caption, DeckTheme.Small, DeckTheme.Dim), 0, 0);
             value.AutoEllipsis = true;
+            value.TextAlign = ContentAlignment.MiddleRight;
             row.Controls.Add(value, 1, 0);
-            DeckTheme.Row(body, row, 27);
+            DeckTheme.Row(body, row, 33);
+            if (index < rows.Length - 1) DeckTheme.Row(body, DeckTheme.Divider(), 1);
         }
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 100, fill: true);
         return card;
     }
 
     private Control PairedCard()
     {
         var card = Card("已配对手机", out var body, note: "撤销后立即断连");
-        DeckTheme.Row(body, pairedList, 100, fill: true);
-        var actions = DeckTheme.Actions(DeckTheme.Surface);
-        pair = AddAction(actions, "显示配对二维码", PairPhoneAsync);
-        DeckTheme.Row(body, actions, 46);
+        var empty = DeckTheme.Table(background: DeckTheme.Surface);
+        pairedEmpty = empty;
+        DeckTheme.Row(empty, new Panel { BackColor = DeckTheme.Surface }, 100, fill: true);
+        var emptyTitle = DeckTheme.Label("还没有配对的手机", DeckTheme.Body, DeckTheme.Muted);
+        emptyTitle.TextAlign = ContentAlignment.MiddleCenter;
+        DeckTheme.Row(empty, emptyTitle, 24);
+        var emptyHint = DeckTheme.Label("生成配对码，用手机扫码即可连接", DeckTheme.Small, DeckTheme.Dim);
+        emptyHint.TextAlign = ContentAlignment.MiddleCenter;
+        DeckTheme.Row(empty, emptyHint, 20);
+        DeckTheme.Row(empty, new Panel { BackColor = DeckTheme.Surface }, 20);
+        // Three steps, not a blank card: an empty list with nothing but a
+        // sentence in the middle of 300px reads as a rendering failure.
+        DeckTheme.Row(empty, PairingSteps(), 84);
+        DeckTheme.Row(empty, new Panel { BackColor = DeckTheme.Surface }, 100, fill: true);
+
+        var stack = new Panel { Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty };
+        stack.Controls.Add(pairedList);
+        stack.Controls.Add(empty);
+        empty.BringToFront();
+        DeckTheme.Row(body, stack, 100, fill: true);
+
+        pair = DeckTheme.Button("显示配对二维码");
+        pair.Margin = Padding.Empty;
+        pair.Click += async (_, _) => await RunActionAsync(PairPhoneAsync);
+        var footer = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 1
+        };
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        pairHint.AutoEllipsis = true;
+        footer.Controls.Add(pairHint, 0, 0);
+        footer.Controls.Add(pair, 1, 0);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 10);
+        DeckTheme.Row(body, footer, 32);
+
         return card;
+    }
+
+    // Centred because the two flexible columns match either side of the block,
+    // so the step list stays on the card's centre line at any window width.
+    private static Control PairingSteps()
+    {
+        var steps = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 4, RowCount = 3
+        };
+        steps.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        steps.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 22));
+        steps.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 322));
+        steps.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        string[] lines =
+        [
+            "点「显示配对二维码」，屏幕上出现二维码",
+            "手机打开 AgentDeck 扫描这个二维码",
+            "核对两台设备显示的手机指纹一致，再点确认"
+        ];
+        for (int index = 0; index < lines.Length; index++)
+        {
+            steps.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
+            var number = DeckTheme.Label($"{index + 1}", DeckTheme.MonoMicro, DeckTheme.Accent);
+            number.TextAlign = ContentAlignment.MiddleLeft;
+            steps.Controls.Add(number, 1, index);
+            var text = DeckTheme.Label(lines[index], DeckTheme.Small, DeckTheme.Dim);
+            text.AutoEllipsis = true;
+            steps.Controls.Add(text, 2, index);
+        }
+        return steps;
     }
 
     private void RefreshStatePage()
@@ -193,35 +293,55 @@ internal sealed partial class ReviewWindow
         var shortId = DeviceShort(id);
         var uptime = running ? DateTime.Now - agent!.StartTime : TimeSpan.Zero;
 
-        hostName.Text = Environment.MachineName;
-        hostId.Text = registered ? shortId : "未注册";
-        statusDevice.Text = registered ? shortId : "—";
+        topBar.Host = Environment.MachineName;
+        topBar.Device = registered ? shortId : "";
+        topBar.State = running ? "AGENT 运行中" : registered ? "AGENT 未运行" : "未注册";
+        topBar.StateColor = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
+
+        statusDevice.Text = registered ? shortId : "";
         statusService.Text = running ? "服务 · 运行中" : registered ? "服务 · 已停止" : "服务 · 未注册";
         statusService.ForeColor = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
-        railStatus.Color = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
-        topDot.Color = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
-        topState.Text = running ? "AGENT 运行中" : registered ? "AGENT 未运行" : "未注册";
-        topState.ForeColor = running ? DeckTheme.Muted : registered ? DeckTheme.Warning : DeckTheme.Dim;
+        rail.StatusColor = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
 
         channelDot.Color = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
         channelTitle.Text = running ? "已就绪" : registered ? "已停止" : "未注册";
         channelAddr.Text = RelayEndpoint() is { Length: > 0 } url ? url : "尚未配置 Relay";
         channelSince.Text = running
             ? $"Agent 进程已运行 {FormatSpan(uptime)} · 退出后手机立即断开"
-            : registered ? "Agent 未运行。重启托盘后会重新连接。" : "先配置 Relay 地址与注册令牌。";
+            : registered ? "Agent 未运行。重启托盘后会重新连接。" : "先配置 Relay 地址与注册令牌，手机才能连接。";
 
-        metricUptime.Text = running ? FormatSpan(uptime) : "—";
-        metricDevice.Text = registered ? shortId : "—";
-        metricRegistered.Text = RegisteredAt() is { } at ? at.ToString("MM-dd HH:mm") : "—";
+        SetMetric(metricUptime, running ? FormatSpan(uptime) : "未运行", !running);
+        SetMetric(metricDevice, registered ? shortId : "未注册", !registered);
+        SetMetric(metricRegistered,
+            RegisteredAt() is { } at ? at.ToString("MM-dd HH:mm") : "未注册", RegisteredAt() is null);
+        asideVersion.Text = codexVersion is { Length: > 0 } version ? version : "—";
+        asideUptime.Text = running ? FormatSpan(uptime) : "未运行";
 
-        identityMachine.Text = Environment.MachineName;
-        identityDevice.Text = registered ? shortId : "未注册";
-        identityRegistered.Text = RegisteredAt() is { } when ? when.ToString("yyyy-MM-dd HH:mm") : "—";
-        identityRelay.Text = RelayEndpoint() is { Length: > 0 } endpoint ? endpoint : "—";
+        SetValue(identityMachine, Environment.MachineName);
+        SetValue(identityDevice, registered ? shortId : "未注册");
+        SetValue(identityRegistered, RegisteredAt() is { } when ? when.ToString("yyyy-MM-dd HH:mm") : "—");
+        SetValue(identityRelay, RelayEndpoint() is { Length: > 0 } endpoint ? endpoint : "—");
 
         pair.Enabled = registered;
+        pairHint.Text = registered ? "同一时间只允许一个配对请求" : "配置云服务器后才能配对";
         RefreshPaired();
         RefreshEvents();
+    }
+
+    // A missing value reads as a label ("未注册"), not an em dash: three long
+    // dashes in a row looked like rules drawn under the captions. Real values
+    // take Ink so the numbers carry the eye; placeholders drop to Dim.
+    private static void SetMetric(Label label, string text, bool placeholder)
+    {
+        label.Text = text;
+        label.ForeColor = placeholder ? DeckTheme.Dim : DeckTheme.Ink;
+        label.Font = DeckTheme.MonoHero;
+    }
+
+    private static void SetValue(Label label, string text)
+    {
+        label.Text = text;
+        label.ForeColor = text is "—" or "未注册" or "" ? DeckTheme.Dim : DeckTheme.Ink;
     }
 
     private void RefreshPaired()
@@ -230,80 +350,62 @@ internal sealed partial class ReviewWindow
         var signature = string.Join("|", phones.Select(p => p.Fingerprint));
         if (signature == pairedSignature) return;
         pairedSignature = signature;
+        pairedEmpty.Visible = phones.Count == 0;
+        pairedList.Visible = phones.Count > 0;
         pairedList.SuspendLayout();
         pairedList.Controls.Clear();
-        if (phones.Count == 0)
+        foreach (var phone in phones)
         {
-            var empty = DeckTheme.Label("还没有配对的手机。点下方按钮生成配对码。",
-                DeckTheme.Small, DeckTheme.Dim);
-            empty.AutoSize = true;
-            empty.Margin = new Padding(0, 6, 0, 0);
-            pairedList.Controls.Add(empty);
-        }
-        else
-        {
-            foreach (var phone in phones)
+            var row = new TableLayoutPanel
             {
-                var row = new TableLayoutPanel
-                {
-                    Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-                    ColumnCount = 2, RowCount = 2, Padding = new Padding(0, 6, 0, 4), Height = 46
-                };
-                row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-                row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-                row.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
-                row.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
-                var who = DeckTheme.Label(ShortFingerprint(phone.Fingerprint), DeckTheme.Monospace, DeckTheme.Ink);
-                row.Controls.Add(who, 0, 0);
-                var when = DeckTheme.Label($"配对于 {phone.At:MM-dd HH:mm}", DeckTheme.Small, DeckTheme.Dim);
-                row.Controls.Add(when, 1, 0);
-                var dot = DeckTheme.Dot(DeckTheme.Good);
-                dot.Dock = DockStyle.None;
-                dot.Anchor = AnchorStyles.Left;
-                dot.Margin = new Padding(0, 0, 6, 0);
-                var state = DeckTheme.Label("已信任", DeckTheme.Small, DeckTheme.Good);
-                var footLine = new TableLayoutPanel
-                {
-                    Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-                    ColumnCount = 3, RowCount = 1
-                };
-                footLine.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 12));
-                footLine.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-                footLine.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-                footLine.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-                footLine.Controls.Add(dot, 0, 0);
-                footLine.Controls.Add(state, 1, 0);
-                var expiry = DeckTheme.Label(
-                    phone.Expires is { } expires ? $"证书到期 {expires:yyyy-MM-dd}" : "", DeckTheme.Small, DeckTheme.Dim);
-                expiry.TextAlign = ContentAlignment.MiddleRight;
-                footLine.Controls.Add(expiry, 2, 0);
-                row.SetColumnSpan(footLine, 2);
-                row.Controls.Add(footLine, 0, 1);
-                pairedList.Controls.Add(row);
-            }
+                Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+                ColumnCount = 2, RowCount = 2, Height = 56, Padding = new Padding(2, 10, 2, 8)
+            };
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            row.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+            row.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
+            var who = DeckTheme.Label(ShortFingerprint(phone.Fingerprint), DeckTheme.Monospace, DeckTheme.Ink);
+            row.Controls.Add(who, 0, 0);
+            var live = DeckTheme.Label("已信任", DeckTheme.Small, DeckTheme.Good);
+            live.AutoSize = true;
+            live.Dock = DockStyle.None;
+            live.Anchor = AnchorStyles.Right;
+            row.Controls.Add(live, 1, 0);
+            var when = DeckTheme.Label($"配对于 {phone.At:MM-dd HH:mm}", DeckTheme.Small, DeckTheme.Dim);
+            row.Controls.Add(when, 0, 1);
+            var expiry = DeckTheme.Label(
+                phone.Expires is { } expires ? $"证书到期 {expires:MM-dd}" : "", DeckTheme.Tiny, DeckTheme.Dim);
+            expiry.AutoSize = true;
+            expiry.Dock = DockStyle.None;
+            expiry.Anchor = AnchorStyles.Right;
+            row.Controls.Add(expiry, 1, 1);
+            pairedList.Controls.Add(row);
+            var line = new Panel { BackColor = DeckTheme.Line2, Height = 1, Margin = Padding.Empty };
+            pairedList.Controls.Add(line);
         }
         pairedList.ResumeLayout();
     }
 
     private void RefreshEvents()
     {
-        var signature = string.Join("|", connectionEvents.Take(3));
+        var signature = string.Join("|", connectionEvents.Take(4));
         if (signature == eventSignature) return;
         eventSignature = signature;
         eventList.SuspendLayout();
         eventList.Controls.Clear();
         if (connectionEvents.Count == 0)
         {
-            var empty = DeckTheme.Label("暂无事件。注册、启动、配对都会记在这里。",
-                DeckTheme.Small, DeckTheme.Dim);
+            var empty = DeckTheme.Label("暂无事件。注册、启动、配对都会记在这里。", DeckTheme.Small, DeckTheme.Dim);
             empty.AutoSize = true;
+            empty.Margin = new Padding(0, 6, 0, 0);
             eventList.Controls.Add(empty);
         }
-        foreach (var line in connectionEvents.Take(3))
+        foreach (var line in connectionEvents.Take(4))
         {
-            var entry = DeckTheme.Label(line, DeckTheme.Monospace, DeckTheme.Dim);
+            var entry = DeckTheme.Label(line, DeckTheme.MonoSmall, DeckTheme.Dim);
             entry.AutoSize = true;
-            entry.Margin = new Padding(0, 0, 0, 4);
+            entry.Margin = new Padding(0, 0, 0, 6);
             eventList.Controls.Add(entry);
         }
         eventList.ResumeLayout();

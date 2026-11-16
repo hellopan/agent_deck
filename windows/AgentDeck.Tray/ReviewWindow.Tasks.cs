@@ -3,9 +3,11 @@ using System.Text.Json;
 
 namespace AgentDeck.Tray;
 
-// 任务 page: the queue on the left, one task's request and trace on the right.
-// Approvals still happen on the phone — this side can look, and can stop a run,
-// but cannot approve on the phone's behalf.
+// 任务 page: a queue pane on the left and one task's request plus trace on the
+// right. Both live inside a single rounded shell with a hairline split, which
+// reads as one workspace; two separate cards made the same data look like two
+// unrelated panels. Approvals still happen on the phone — this side can look,
+// and can stop a run, but cannot approve on the phone's behalf.
 internal sealed partial class ReviewWindow
 {
     // A FlowLayoutPanel rather than a TableLayoutPanel: an absolute-height row
@@ -17,6 +19,7 @@ internal sealed partial class ReviewWindow
         FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true,
         Padding = new Padding(0, 0, 2, 2)
     };
+    private readonly Label queueChip = DeckTheme.Chip("0", DeckTheme.Accent);
     private readonly Label queueCount = DeckTheme.Label("队列为空", DeckTheme.Small, DeckTheme.Dim);
     private readonly Label detailTitle = DeckTheme.Label("未选择任务", DeckTheme.Hero);
     private readonly Label detailState = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
@@ -26,142 +29,269 @@ internal sealed partial class ReviewWindow
         Dock = DockStyle.Fill, Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.None,
         WordWrap = true, AccessibleName = "请求内容"
     };
-    private readonly Label detailDirectory = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
-    private readonly Label detailSandbox = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
-    private readonly Label detailAdapter = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
-    private readonly Label detailTaskId = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
-    private readonly Label traceTitle = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
+    private readonly Label detailDirectory = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly Label detailSandbox = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly Label detailAdapter = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly Label detailTaskId = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Dim);
+    private readonly Label traceTitle = DeckTheme.Label("", DeckTheme.MonoSmall, DeckTheme.Dim);
     private readonly TraceView traceOutput = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
-    private readonly Label traceEmpty = DeckTheme.Label(
-        "该任务还没有输出。任务开始运行后，事件会写在这里。", DeckTheme.Small, DeckTheme.Dim);
-    private readonly Button follow = DeckTheme.Button("LIVE · 跟随中");
+    private readonly TableLayoutPanel traceEmpty = DeckTheme.Table(background: DeckTheme.Well);
+    private readonly Label traceEmptyTitle = DeckTheme.Label("未选择任务", DeckTheme.Body, DeckTheme.Muted);
+    private readonly Label traceEmptyHint = DeckTheme.Label("从左侧队列选择一条任务查看轨迹。",
+        DeckTheme.Small, DeckTheme.Dim);
+    private readonly Button follow = DeckTheme.Button("LIVE");
+    private readonly Button cancel = DeckTheme.Button("叫停任务", danger: true);
     private QueueItem? selected;
     private long traceLength = -1;
     private bool followTrace = true;
 
     private Control TasksPage()
     {
-        var body = new TableLayoutPanel
+        var card = new DeckTheme.CardPanel();
+        var split = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Canvas, Margin = Padding.Empty,
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
             ColumnCount = 3, RowCount = 1
         };
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 36));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 14));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 64));
-        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        body.Controls.Add(QueueCard(), 0, 0);
-        body.Controls.Add(new Panel { BackColor = DeckTheme.Canvas }, 1, 0);
-        body.Controls.Add(DetailCard(), 2, 0);
-        return Page("任务", "查看这台电脑的任务队列与执行状态；审批在手机上完成。", body);
+        split.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300));
+        split.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1));
+        split.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        split.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        split.Controls.Add(QueuePane(), 0, 0);
+        split.Controls.Add(new Panel { BackColor = DeckTheme.Line, Margin = Padding.Empty }, 1, 0);
+        split.Controls.Add(DetailPane(), 2, 0);
+        card.Controls.Add(split);
+        return Page("任务", "查看这台电脑的任务队列与执行状态；审批在手机上完成。", card);
     }
 
-    private Control QueueCard()
+    private Control QueuePane()
     {
-        var card = Card("任务", out var cardBody, note: "按提交时间");
-        DeckTheme.Row(cardBody, queueCount, 24);
-        DeckTheme.Row(cardBody, queueList, 100, fill: true);
-        queueList.SizeChanged += (_, _) => ResizeQueueRows();
-        var actions = DeckTheme.Actions(DeckTheme.Surface);
-        AddAction(actions, "刷新队列", RefreshInboxAsync, primary: true);
-        DeckTheme.Row(cardBody, actions, 38);
-        return card;
-    }
-
-    private Control DetailCard()
-    {
-        var card = Card("任务详情", out var body, note: "审批在手机上完成");
+        var pane = DeckTheme.Table(background: DeckTheme.Surface);
         var head = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 3, RowCount = 1, Padding = new Padding(16, 0, 14, 0)
+        };
+        head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        head.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var title = DeckTheme.Label("任务", DeckTheme.Section);
+        title.AutoSize = true;
+        title.Dock = DockStyle.None;
+        head.Controls.Add(title, 0, 0);
+        queueChip.Margin = new Padding(9, 0, 0, 0);
+        queueChip.BackColor = DeckTheme.Tint(DeckTheme.Accent, 0.14);
+        queueChip.ForeColor = DeckTheme.Accent;
+        head.Controls.Add(queueChip, 1, 0);
+        var order = DeckTheme.Label("按提交时间", DeckTheme.Tiny, DeckTheme.Dim);
+        order.TextAlign = ContentAlignment.MiddleRight;
+        head.Controls.Add(order, 2, 0);
+        DeckTheme.Row(pane, head, 62);
+        DeckTheme.Row(pane, DeckTheme.Divider(DeckTheme.Line2), 1);
+        DeckTheme.Row(pane, queueList, 100, fill: true);
+        queueList.SizeChanged += (_, _) => ResizeQueueRows();
+
+        DeckTheme.Row(pane, DeckTheme.Divider(), 1);
+        var foot = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 1, Padding = new Padding(16, 0, 12, 0)
+        };
+        foot.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        foot.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        foot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        queueCount.AutoEllipsis = true;
+        foot.Controls.Add(queueCount, 0, 0);
+        var refresh = DeckTheme.Button("刷新");
+        refresh.MinimumSize = new Size(56, 26);
+        refresh.Padding = new Padding(8, 0, 8, 0);
+        refresh.Font = DeckTheme.Small;
+        refresh.Margin = Padding.Empty;
+        refresh.Anchor = AnchorStyles.None;
+        refresh.Click += async (_, _) => await RunActionAsync(RefreshInboxAsync);
+        foot.Controls.Add(refresh, 1, 0);
+        DeckTheme.Row(pane, foot, 46);
+        return pane;
+    }
+
+    private Control DetailPane()
+    {
+        var pane = DeckTheme.Table(background: DeckTheme.Surface);
+        var head = DeckTheme.Table(new Padding(20, 14, 20, 12), DeckTheme.Surface);
+        var titleLine = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
             ColumnCount = 2, RowCount = 1
         };
-        head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        head.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        titleLine.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        titleLine.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        titleLine.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         detailTitle.AutoEllipsis = true;
-        head.Controls.Add(detailTitle, 0, 0);
-        detailState.Margin = new Padding(10, 0, 0, 0);
+        titleLine.Controls.Add(detailTitle, 0, 0);
         detailState.AutoSize = true;
         detailState.Dock = DockStyle.None;
-        detailState.TextAlign = ContentAlignment.MiddleRight;
-        head.Controls.Add(detailState, 1, 0);
-        DeckTheme.Row(body, head, 30);
+        detailState.Anchor = AnchorStyles.Right;
+        detailState.Padding = new Padding(8, 3, 8, 3);
+        detailState.Margin = new Padding(12, 0, 0, 0);
+        detailState.Visible = false;
+        DeckTheme.Round(detailState, 3);
+        titleLine.Controls.Add(detailState, 1, 0);
+        DeckTheme.Row(head, titleLine, 30);
         detailMeta.AutoEllipsis = true;
-        DeckTheme.Row(body, detailMeta, 20);
-        DeckTheme.Row(body, DeckTheme.Caption("请求内容"), 24);
-        DeckTheme.Row(body, DeckTheme.Reader(detailPrompt, "选择左侧任务后显示提交的提示词。"), 88);
+        DeckTheme.Row(head, detailMeta, 20);
+        DeckTheme.Row(pane, head, 62);
+        DeckTheme.Row(pane, DeckTheme.Divider(), 1);
 
-        var facts = new TableLayoutPanel
+        var body = DeckTheme.Table(new Padding(20, 0, 20, 0), DeckTheme.Surface);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 14);
+        DeckTheme.Row(body, DeckTheme.Caption("请求内容"), 22);
+        var promptFrame = new Panel
         {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 2, RowCount = 2
+            Dock = DockStyle.Fill, Margin = Padding.Empty, Padding = new Padding(14, 10, 14, 8),
+            BackColor = DeckTheme.Well
         };
-        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        facts.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        facts.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        facts.Controls.Add(Fact("工作目录", detailDirectory), 0, 0);
-        facts.Controls.Add(Fact("沙箱", detailSandbox), 1, 0);
-        facts.Controls.Add(Fact("适配器", detailAdapter), 0, 1);
-        facts.Controls.Add(Fact("任务 ID", detailTaskId), 1, 1);
-        DeckTheme.Row(body, facts, 66);
+        promptFrame.Controls.Add(detailPrompt);
+        promptFrame.Paint += (_, e) =>
+        {
+            using var accent = new SolidBrush(DeckTheme.Accent);
+            e.Graphics.FillRectangle(accent, 0, 8, 2, Math.Max(0, promptFrame.Height - 16));
+        };
+        DeckTheme.Round(promptFrame, 6);
+        detailPrompt.BackColor = DeckTheme.Well;
+        detailPrompt.ForeColor = DeckTheme.Muted;
+        detailPrompt.Font = DeckTheme.Body;
+        detailPrompt.BorderStyle = BorderStyle.None;
+        DeckTheme.Row(body, promptFrame, 74);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 14);
+        DeckTheme.Row(body, FactsRow(), 58);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 14);
+        DeckTheme.Row(body, TraceHead(), 30);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 6);
 
-        var traceHead = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 3, RowCount = 1, Padding = new Padding(0, 6, 0, 0)
-        };
-        traceHead.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        traceHead.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        traceHead.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        traceHead.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var caption = DeckTheme.Caption("执行轨迹");
-        caption.AutoSize = true;
-        caption.Dock = DockStyle.None;
-        traceHead.Controls.Add(caption, 0, 0);
-        traceTitle.AutoEllipsis = true;
-        traceTitle.Margin = new Padding(10, 0, 0, 0);
-        traceHead.Controls.Add(traceTitle, 1, 0);
-        follow.AutoSize = true;
-        follow.Dock = DockStyle.None;
-        follow.MinimumSize = new Size(0, 22);
-        follow.Padding = new Padding(8, 0, 8, 0);
-        follow.Font = DeckTheme.Tiny;
-        follow.Margin = Padding.Empty;
-        follow.Click += (_, _) =>
-        {
-            followTrace = !followTrace;
-            follow.Text = followTrace ? "LIVE · 跟随中" : "已暂停";
-            follow.ForeColor = followTrace ? DeckTheme.Good : DeckTheme.Warning;
-            if (followTrace) LoadTrace(force: true);
-        };
-        follow.ForeColor = DeckTheme.Good;
-        traceHead.Controls.Add(follow, 2, 0);
-        DeckTheme.Row(body, traceHead, 30);
         var traceFrame = new Panel
         {
-            Dock = DockStyle.Fill, Margin = Padding.Empty, Padding = new Padding(12), BackColor = DeckTheme.Well
+            Dock = DockStyle.Fill, Margin = Padding.Empty, Padding = new Padding(12, 8, 12, 8),
+            BackColor = DeckTheme.Well
         };
-        traceEmpty.TextAlign = ContentAlignment.MiddleCenter;
+        traceEmptyTitle.TextAlign = ContentAlignment.MiddleCenter;
+        traceEmptyHint.TextAlign = ContentAlignment.MiddleCenter;
+        DeckTheme.Row(traceEmpty, new Panel { BackColor = DeckTheme.Well }, 100, fill: true);
+        DeckTheme.Row(traceEmpty, traceEmptyTitle, 24);
+        DeckTheme.Row(traceEmpty, traceEmptyHint, 20);
+        DeckTheme.Row(traceEmpty, new Panel { BackColor = DeckTheme.Well }, 100, fill: true);
         traceFrame.Controls.Add(traceOutput);
         traceFrame.Controls.Add(traceEmpty);
         traceEmpty.BringToFront();
+        DeckTheme.Round(traceFrame, 6);
         DeckTheme.Row(body, traceFrame, 100, fill: true);
+        DeckTheme.Row(pane, body, 100, fill: true);
 
-        var actions = DeckTheme.Actions(DeckTheme.Surface);
-        AddAction(actions, "叫停任务", CancelAsync, danger: true);
-        DeckTheme.Row(body, actions, 38);
-        return card;
+        DeckTheme.Row(pane, DeckTheme.Divider(), 1);
+        var foot = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 1, Padding = new Padding(20, 0, 16, 0)
+        };
+        foot.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        foot.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        foot.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var hint = DeckTheme.Label("审批在手机上完成；这里只能查看与叫停。", DeckTheme.Tiny, DeckTheme.Dim);
+        hint.AutoEllipsis = true;
+        foot.Controls.Add(hint, 0, 0);
+        cancel.Margin = Padding.Empty;
+        cancel.Anchor = AnchorStyles.None;
+        cancel.MinimumSize = new Size(0, 30);
+        cancel.Enabled = false;
+        cancel.Click += async (_, _) => await RunActionAsync(CancelAsync);
+        foot.Controls.Add(cancel, 1, 0);
+        DeckTheme.Row(pane, foot, 50);
+        return pane;
+    }
+
+    private Control FactsRow()
+    {
+        var facts = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 7, RowCount = 1
+        };
+        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
+        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1));
+        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22));
+        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1));
+        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22));
+        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1));
+        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 22));
+        facts.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        facts.Controls.Add(Fact("工作目录", detailDirectory), 0, 0);
+        facts.Controls.Add(ColumnRule(), 1, 0);
+        facts.Controls.Add(Fact("沙箱", detailSandbox), 2, 0);
+        facts.Controls.Add(ColumnRule(), 3, 0);
+        facts.Controls.Add(Fact("适配器", detailAdapter), 4, 0);
+        facts.Controls.Add(ColumnRule(), 5, 0);
+        facts.Controls.Add(Fact("任务 ID", detailTaskId), 6, 0);
+        return facts;
+    }
+
+    private static Control ColumnRule()
+    {
+        var rule = DeckTheme.Divider();
+        rule.Margin = new Padding(0, 6, 0, 6);
+        return rule;
     }
 
     private static Control Fact(string caption, Label value)
     {
         var table = DeckTheme.Table(background: DeckTheme.Surface);
-        DeckTheme.Row(table, DeckTheme.Caption(caption), 15);
+        DeckTheme.Row(table, DeckTheme.Caption(caption), 16);
         value.AutoEllipsis = true;
-        DeckTheme.Row(table, value, 17);
+        value.Font = DeckTheme.MonoSmall;
+        DeckTheme.Row(table, value, 20);
+        table.Margin = new Padding(12, 0, 6, 0);
         return table;
+    }
+
+    private Control TraceHead()
+    {
+        var head = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 3, RowCount = 1
+        };
+        head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        head.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var caption = DeckTheme.Caption("执行轨迹");
+        caption.AutoSize = true;
+        caption.Dock = DockStyle.None;
+        head.Controls.Add(caption, 0, 0);
+        traceTitle.AutoEllipsis = true;
+        traceTitle.Font = DeckTheme.MonoMicro;
+        traceTitle.Margin = new Padding(10, 0, 0, 0);
+        head.Controls.Add(traceTitle, 1, 0);
+
+        follow.Font = DeckTheme.MonoMicro;
+        follow.MinimumSize = new Size(0, 20);
+        follow.Padding = new Padding(7, 0, 7, 0);
+        follow.Margin = Padding.Empty;
+        follow.Anchor = AnchorStyles.Right;
+        follow.FlatAppearance.BorderSize = 0;
+        follow.BackColor = DeckTheme.Tint(DeckTheme.Good, 0.14);
+        follow.ForeColor = DeckTheme.Good;
+        follow.FlatAppearance.MouseOverBackColor = DeckTheme.Tint(DeckTheme.Good, 0.24);
+        DeckTheme.Round(follow, 3);
+        follow.Click += (_, _) =>
+        {
+            followTrace = !followTrace;
+            follow.Text = followTrace ? "LIVE" : "暂停";
+            follow.ForeColor = followTrace ? DeckTheme.Good : DeckTheme.Warning;
+            follow.BackColor = DeckTheme.Tint(followTrace ? DeckTheme.Good : DeckTheme.Warning, 0.14);
+            if (followTrace) LoadTrace(force: true);
+        };
+        head.Controls.Add(follow, 2, 0);
+        return head;
     }
 
     private async Task RefreshInboxAsync()
@@ -176,10 +306,12 @@ internal sealed partial class ReviewWindow
         queueList.SuspendLayout();
         queueList.Controls.Clear();
         var active = items.Count(item => item.Status is "queued" or "running");
+        queueChip.Text = active.ToString();
+        queueChip.ForeColor = active > 0 ? DeckTheme.Accent : DeckTheme.Dim;
+        queueChip.BackColor = active > 0 ? DeckTheme.Tint(DeckTheme.Accent, 0.14) : DeckTheme.Surface2;
         queueCount.Text = items.Length == 0 ? "队列为空" : $"{active} 条未结束 · 共 {items.Length} 条";
         statusPending.Text = $"待处理 {active}";
-        asidePending.Text = active.ToString();
-        pages[1].Tab.Badge = active;
+        rail.Badge = active;
         var archived = false;
         foreach (var item in items)
         {
@@ -187,13 +319,13 @@ internal sealed partial class ReviewWindow
             if (final && !archived)
             {
                 archived = true;
-                var separator = DeckTheme.Label($"已处理 · {items.Length - active}", DeckTheme.Small, DeckTheme.Dim);
+                var separator = DeckTheme.Label($"已处理 · {items.Length - active}", DeckTheme.Tiny, DeckTheme.Dim);
                 separator.AutoSize = false;
-                separator.Height = 26;
-                separator.Padding = new Padding(10, 0, 0, 0);
+                separator.Height = 28;
+                separator.Padding = new Padding(16, 0, 0, 0);
                 queueList.Controls.Add(separator);
             }
-            var row = new QueueRow(item) { Height = 78 };
+            var row = new QueueRow(item) { Height = 84 };
             row.Click += (_, _) => SelectTask(row);
             queueList.Controls.Add(row);
         }
@@ -201,8 +333,8 @@ internal sealed partial class ReviewWindow
         {
             var empty = DeckTheme.Label("还没有任务。手机端提交后会出现在这里。", DeckTheme.Small, DeckTheme.Dim);
             empty.AutoSize = false;
-            empty.Height = 34;
-            empty.Padding = new Padding(12, 10, 0, 0);
+            empty.Height = 40;
+            empty.Padding = new Padding(16, 12, 0, 0);
             queueList.Controls.Add(empty);
         }
         ResizeQueueRows();
@@ -229,21 +361,34 @@ internal sealed partial class ReviewWindow
         detailTitle.Text = string.IsNullOrWhiteSpace(row.Item.Summary) ? "未命名任务" : row.Item.Summary;
         detailState.Text = StatusWord(row.Item.Status);
         detailState.ForeColor = StatusColor(row.Item.Status);
-        detailMeta.Text = $"{row.Item.ProjectId} · 提交于 {row.Item.SubmittedAt.ToLocalTime():MM-dd HH:mm}";
+        detailState.BackColor = DeckTheme.Tint(StatusColor(row.Item.Status));
+        detailState.Visible = true;
+        detailMeta.Text = $"{row.Item.ProjectId}   ·   提交于 {row.Item.SubmittedAt.ToLocalTime():MM-dd HH:mm}" +
+                          $"   ·   {ShortId(row.Item.TaskId)}";
         detailPrompt.Text = row.Item.Prompt;
-        detailDirectory.Text = row.Item.Directory;
-        detailSandbox.Text = "read-only";
-        detailAdapter.Text = codexVersion is { Length: > 0 } version ? $"Codex {version}" : "Codex";
-        detailTaskId.Text = row.Item.TaskId[..Math.Min(12, row.Item.TaskId.Length)];
-        traceTitle.Text = $"task {row.Item.TaskId[..Math.Min(8, row.Item.TaskId.Length)]}";
+        SetFact(detailDirectory, row.Item.Directory);
+        SetFact(detailSandbox, "read-only");
+        SetFact(detailAdapter, codexVersion is { Length: > 0 } version ? $"Codex {version}" : "Codex");
+        SetFact(detailTaskId, ShortId(row.Item.TaskId));
+        traceTitle.Text = $"task {ShortId(row.Item.TaskId)}";
         traceLength = -1;
         traceOutput.Clear();
         traceEmpty.Visible = false;
         traceOutput.Visible = true;
         followTrace = true;
-        follow.Text = "LIVE · 跟随中";
+        follow.Text = "LIVE";
         follow.ForeColor = DeckTheme.Good;
+        follow.BackColor = DeckTheme.Tint(DeckTheme.Good, 0.14);
+        cancel.Enabled = row.Item.Status is "queued" or "running";
         LoadTrace(force: true);
+    }
+
+    private static string ShortId(string id) => id[..Math.Min(8, id.Length)];
+
+    private static void SetFact(Label label, string text)
+    {
+        label.Text = text;
+        label.ForeColor = text is "—" or "" ? DeckTheme.Dim : DeckTheme.Ink;
     }
 
     private void ClearDetail()
@@ -251,14 +396,18 @@ internal sealed partial class ReviewWindow
         selected = null;
         detailTitle.Text = "未选择任务";
         detailState.Text = "";
-        detailMeta.Text = "";
+        detailState.Visible = false;
+        detailMeta.Text = "从左侧队列选择一条任务";
         detailPrompt.Text = "";
-        detailDirectory.Text = detailSandbox.Text = detailAdapter.Text = detailTaskId.Text = "—";
+        foreach (var fact in new[] { detailDirectory, detailSandbox, detailAdapter, detailTaskId }) SetFact(fact, "—");
         traceTitle.Text = "";
         traceOutput.Clear();
-        traceEmpty.Text = "选择一条任务，查看它的执行轨迹。";
+        traceEmptyTitle.Text = "未选择任务";
+        traceEmptyHint.Text = "从左侧队列选择一条任务查看轨迹。";
         traceEmpty.Visible = true;
         traceOutput.Visible = false;
+        follow.Enabled = false;
+        cancel.Enabled = false;
         traceLength = -1;
     }
 
@@ -277,7 +426,8 @@ internal sealed partial class ReviewWindow
         traceOutput.Clear();
         if (!File.Exists(path))
         {
-            traceEmpty.Text = "该任务还没有输出。任务开始运行后，事件会写在这里。";
+            traceEmptyTitle.Text = "尚无输出";
+            traceEmptyHint.Text = "任务开始运行后，事件会实时写在这里。";
             traceEmpty.Visible = true;
             traceOutput.Visible = false;
             return;
@@ -430,37 +580,43 @@ internal sealed partial class ReviewWindow
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
-            using (var background = new SolidBrush(Selected ? DeckTheme.Surface2 : hover ? DeckTheme.Line2 : DeckTheme.Surface))
+            using (var background = new SolidBrush(Selected ? DeckTheme.Selected : hover ? DeckTheme.Line2 : DeckTheme.Surface))
                 g.FillRectangle(background, ClientRectangle);
-            using (var pen = new Pen(DeckTheme.Line2))
+            using (var pen = new Pen(DeckTheme.Hairline))
                 g.DrawLine(pen, 0, Height - 1, Width, Height - 1);
             if (Selected)
             {
                 using var accent = new SolidBrush(DeckTheme.Accent);
-                g.FillRectangle(accent, 0, 6, 2, Height - 12);
+                g.FillRectangle(accent, 0, 0, 2, Height);
             }
-            int left = 12;
-            TextRenderer.DrawText(g, Item.ProjectId, DeckTheme.Monospace,
-                new Point(left, 8), DeckTheme.Dim, TextFormatFlags.NoPadding);
+            const int left = 16;
+            int right = Width - 14;
+            TextRenderer.DrawText(g, Item.ProjectId, DeckTheme.MonoMicro,
+                new Point(left, 10), DeckTheme.Dim, TextFormatFlags.NoPadding);
             var time = Item.SubmittedAt.ToLocalTime().ToString("HH:mm");
-            var timeWidth = TextRenderer.MeasureText(g, time, DeckTheme.Monospace, Size.Empty, TextFormatFlags.NoPadding).Width;
-            TextRenderer.DrawText(g, time, DeckTheme.Monospace,
-                new Point(Width - timeWidth - 10, 8), DeckTheme.Dim, TextFormatFlags.NoPadding);
+            var timeWidth = TextRenderer.MeasureText(g, time, DeckTheme.MonoMicro, Size.Empty,
+                TextFormatFlags.NoPadding).Width;
+            TextRenderer.DrawText(g, time, DeckTheme.MonoMicro,
+                new Point(right - timeWidth, 10), DeckTheme.Dim, TextFormatFlags.NoPadding);
             var title = string.IsNullOrWhiteSpace(Item.Summary) ? Item.Prompt : Item.Summary;
             TextRenderer.DrawText(g, title, DeckTheme.Body,
-                new Rectangle(left, 26, Math.Max(10, Width - left - 12), 20), DeckTheme.Ink,
+                new Rectangle(left, 31, Math.Max(10, right - left), 20), DeckTheme.Ink,
                 TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
             var word = StatusWord(Item.Status);
             var color = StatusColor(Item.Status);
-            int x = left;
             using (var dot = new SolidBrush(color))
-                g.FillEllipse(dot, x, Height - 24, 5, 5);
+                g.FillEllipse(dot, left, Height - 25, 5, 5);
             TextRenderer.DrawText(g, word, DeckTheme.Small,
-                new Point(x + 10, Height - 31), color, TextFormatFlags.NoPadding);
+                new Point(left + 11, Height - 32), color, TextFormatFlags.NoPadding);
+            int wordWidth = TextRenderer.MeasureText(g, word, DeckTheme.Small, Size.Empty,
+                TextFormatFlags.NoPadding).Width;
+            TextRenderer.DrawText(g, "Codex", DeckTheme.Tiny,
+                new Point(left + 11 + wordWidth + 8, Height - 31), DeckTheme.Dim, TextFormatFlags.NoPadding);
             var id = Item.TaskId.Length > 8 ? Item.TaskId[..8] : Item.TaskId;
-            var idWidth = TextRenderer.MeasureText(g, id, DeckTheme.Monospace, Size.Empty, TextFormatFlags.NoPadding).Width;
-            TextRenderer.DrawText(g, id, DeckTheme.Monospace,
-                new Point(Width - idWidth - 10, Height - 30), DeckTheme.Dim, TextFormatFlags.NoPadding);
+            var idWidth = TextRenderer.MeasureText(g, id, DeckTheme.MonoMicro, Size.Empty,
+                TextFormatFlags.NoPadding).Width;
+            TextRenderer.DrawText(g, id, DeckTheme.MonoMicro,
+                new Point(right - idWidth, Height - 31), DeckTheme.Dim, TextFormatFlags.NoPadding);
         }
     }
 }

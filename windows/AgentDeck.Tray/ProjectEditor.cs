@@ -39,17 +39,23 @@ internal sealed class ProjectEditor : Form
             AllowUserToAddRows = false, AllowUserToDeleteRows = false, MultiSelect = false,
             SelectionMode = DataGridViewSelectionMode.FullRowSelect, RowHeadersVisible = false,
             AccessibleName = "本机授权项目",
-            BackgroundColor = DeckTheme.Well, GridColor = DeckTheme.Line,
+            BackgroundColor = DeckTheme.Surface, GridColor = DeckTheme.Hairline,
             BorderStyle = BorderStyle.None, EnableHeadersVisualStyles = false,
-            ColumnHeadersHeight = 36, ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing
+            CellBorderStyle = DataGridViewCellBorderStyle.SingleHorizontal,
+            ColumnHeadersBorderStyle = DataGridViewHeaderBorderStyle.None,
+            ColumnHeadersHeight = 34, ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing
         };
         grid.RowTemplate.Height = 34;
         grid.ColumnHeadersDefaultCellStyle.BackColor = DeckTheme.Surface;
-        grid.ColumnHeadersDefaultCellStyle.ForeColor = DeckTheme.Muted;
+        grid.ColumnHeadersDefaultCellStyle.ForeColor = DeckTheme.Dim;
         grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = DeckTheme.Surface;
-        grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = DeckTheme.Muted;
-        grid.DefaultCellStyle.BackColor = DeckTheme.Well;
+        grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = DeckTheme.Dim;
+        grid.ColumnHeadersDefaultCellStyle.Font = DeckTheme.Tiny;
+        grid.ColumnHeadersDefaultCellStyle.Padding = new Padding(10, 0, 0, 0);
+        grid.DefaultCellStyle.BackColor = DeckTheme.Surface;
         grid.DefaultCellStyle.ForeColor = DeckTheme.Ink;
+        grid.DefaultCellStyle.Font = DeckTheme.Small;
+        grid.DefaultCellStyle.Padding = new Padding(10, 0, 0, 0);
         grid.DefaultCellStyle.SelectionBackColor = DeckTheme.Active;
         grid.DefaultCellStyle.SelectionForeColor = DeckTheme.Ink;
         grid.Columns.Add(new DataGridViewTextBoxColumn
@@ -61,6 +67,21 @@ internal sealed class ProjectEditor : Form
         });
         grid.Columns.Add(new DataGridViewCheckBoxColumn
             { HeaderText = "启用", DataPropertyName = nameof(Project.Enabled), Width = 65 });
+        // DataGridView has no empty state, and an empty grid with a header row
+        // reads as a control that failed to load. The text is painted over the
+        // body area instead of added as a label, so the header stays visible.
+        grid.Paint += (_, e) =>
+        {
+            if (rows.Count > 0) return;
+            // 18, not 12: the grid's paint origin sits six pixels left of its
+            // cell padding, so 18 lines the text up with the header column.
+            int top = grid.ColumnHeadersHeight + 26;
+            TextRenderer.DrawText(e.Graphics, "还没有授权目录", DeckTheme.Body,
+                new Point(18, top), DeckTheme.Muted, TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(e.Graphics, "点「添加目录」选择第一个项目目录", DeckTheme.Small,
+                new Point(18, top + 26), DeckTheme.Dim, TextFormatFlags.NoPadding);
+        };
+        rows.ListChanged += (_, _) => grid.Invalidate();
 
         var actions = DeckTheme.Actions();
         AddButton(actions, "添加目录", () =>
@@ -85,8 +106,12 @@ internal sealed class ProjectEditor : Form
         DeckTheme.Row(layout, DeckTheme.Label("项目授权", DeckTheme.Heading), 52);
         DeckTheme.Row(layout, DeckTheme.Label("新增项目默认停用。项目 ID 可用小写字母、数字、连字符和下划线。",
             DeckTheme.Body, DeckTheme.Muted), 45);
-        DeckTheme.Row(layout, grid, 100, fill: true);
-        DeckTheme.Row(layout, new Panel(), 14);
+        var frame = new DeckTheme.CardPanel();
+        frame.Controls.Add(grid);
+        DeckTheme.Row(layout, frame, 100, fill: true);
+        var hint = DeckTheme.Label("双击项目 ID 编辑；启用后，写入会在该目录内校验。", DeckTheme.Tiny, DeckTheme.Dim);
+        DeckTheme.Row(layout, new Panel(), 6);
+        DeckTheme.Row(layout, hint, 20);
         DeckTheme.Row(layout, actions, 40);
         Controls.Add(layout);
     }

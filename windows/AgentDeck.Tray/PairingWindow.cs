@@ -21,10 +21,13 @@ internal sealed class PairingWindow : Form
         DeckTheme.Row(layout, DeckTheme.Label("配对手机", DeckTheme.Heading), 52);
         DeckTheme.Row(layout, DeckTheme.Label("在 AgentDeck Android 应用中扫码。配对码两分钟内有效。",
             DeckTheme.Body, DeckTheme.Muted), 34);
-        var preview = new PictureBox
+        // A PictureBox centres the bitmap at its native pixel size, so a short
+        // payload produced a 148px code floating in a 560px hole. QrPreview scales
+        // to the available square with nearest-neighbour, keeping modules sharp.
+        var preview = new QrPreview(image)
         {
-            Dock = DockStyle.Fill, Image = image, SizeMode = PictureBoxSizeMode.CenterImage,
-            BackColor = DeckTheme.Surface, AccessibleName = "手机配对二维码", Margin = Padding.Empty
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Well,
+            AccessibleName = "手机配对二维码", Margin = Padding.Empty
         };
         DeckTheme.Row(layout, preview, 100, fill: true);
         var status = DeckTheme.Label("扫完后核对两台设备显示的手机指纹。", DeckTheme.Body, DeckTheme.Muted);
@@ -66,5 +69,40 @@ internal sealed class PairingWindow : Form
                 if (!IsDisposed) button.Enabled = true;
             }
         };
+    }
+
+    private sealed class QrPreview : Control
+    {
+        private readonly Image image;
+
+        internal QrPreview(Image image)
+        {
+            this.image = image;
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
+                     ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            using (var background = new SolidBrush(BackColor)) g.FillRectangle(background, ClientRectangle);
+            int available = Math.Max(40, Math.Min(Width, Height) - 48);
+            float ratio = (float)available / image.Width;
+            ratio = Math.Min(ratio, 4f);
+            int size = Math.Max(40, (int)(image.Width * ratio));
+            g.InterpolationMode = ratio >= 1
+                ? System.Drawing.Drawing2D.InterpolationMode.NearestNeighbor
+                : System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = System.Drawing.Drawing2D.PixelOffsetMode.Half;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            var target = new Rectangle((Width - size) / 2, (Height - size) / 2, size, size);
+            // The quiet zone is four modules wide, so an 8px radius only trims
+            // white — the modules themselves are never clipped.
+            using var path = DeckTheme.Rounded(target, 8);
+            var previous = g.Clip;
+            g.SetClip(path);
+            g.DrawImage(image, target);
+            g.Clip = previous;
+        }
     }
 }

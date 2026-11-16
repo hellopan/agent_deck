@@ -9,20 +9,13 @@ namespace AgentDeck.Tray;
 // task logs go.
 internal sealed partial class ReviewWindow
 {
-    private readonly DataGridView projectGrid = new()
+    private readonly WhitelistView projectTable = new()
     {
-        Dock = DockStyle.Fill, AutoGenerateColumns = false, AllowUserToAddRows = false,
-        AllowUserToDeleteRows = false, AllowUserToResizeRows = false, ReadOnly = true,
-        MultiSelect = false, SelectionMode = DataGridViewSelectionMode.FullRowSelect,
-        RowHeadersVisible = false, AccessibleName = "项目白名单",
-        BackgroundColor = DeckTheme.Surface, GridColor = DeckTheme.Line2,
-        BorderStyle = BorderStyle.None, EnableHeadersVisualStyles = false,
-        ColumnHeadersHeight = 28, ColumnHeadersHeightSizeMode = DataGridViewColumnHeadersHeightSizeMode.DisableResizing,
-        Margin = Padding.Empty
+        Dock = DockStyle.Fill, Margin = Padding.Empty
     };
-    private readonly Label projectSummary = DeckTheme.Label("尚未加载授权清单。", DeckTheme.Small, DeckTheme.Dim);
+    private readonly Label projectSummary = DeckTheme.Label("0 个目录", DeckTheme.MonoMicro, DeckTheme.Dim);
     private readonly DeckTheme.StatusDot serviceDot = DeckTheme.Dot(DeckTheme.Dim);
-    private readonly Label serviceTitle = DeckTheme.Label("开机自动运行", DeckTheme.Body, DeckTheme.Ink);
+    private readonly Label serviceTitle = DeckTheme.Label("开机自动运行 · 未安装", DeckTheme.Body, DeckTheme.Muted);
     private readonly Label serviceDetail = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
     private readonly DeckTheme.StatusDot codexDot = DeckTheme.Dot(DeckTheme.Dim);
     private readonly DeckTheme.StatusDot cursorDot = DeckTheme.Dot(DeckTheme.Dim);
@@ -43,23 +36,23 @@ internal sealed partial class ReviewWindow
         // otherwise be pushed out of the window, which is exactly the defect the
         // old five-page settings screen had.
         body.AutoScroll = true;
-        DeckTheme.Row(body, ProjectCard(), 240);
+        DeckTheme.Row(body, ProjectCard(), 100, fill: true);
         DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Canvas }, 12);
         var bottom = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, BackColor = DeckTheme.Canvas, Margin = Padding.Empty,
             ColumnCount = 3, RowCount = 1
         };
-        bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44));
-        bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 14));
-        bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56));
+        bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 43));
+        bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 16));
+        bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 57));
         bottom.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         bottom.Controls.Add(ServiceCard(), 0, 0);
         bottom.Controls.Add(new Panel { BackColor = DeckTheme.Canvas }, 1, 0);
         bottom.Controls.Add(DetectionCard(), 2, 0);
-        DeckTheme.Row(body, bottom, 222);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Canvas }, 10);
-        DeckTheme.Row(body, LogsRow(), 40);
+        DeckTheme.Row(body, bottom, 204);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Canvas }, 12);
+        DeckTheme.Row(body, LogsCard(), 54);
         var page = Page("设置", "只在这几个目录里工作。其余路径一律拒绝。", body);
         page.VisibleChanged += (_, _) => { if (page.Visible) RefreshSettings(); };
         return page;
@@ -67,69 +60,85 @@ internal sealed partial class ReviewWindow
 
     private Control ProjectCard()
     {
-        var card = Card("项目白名单", out var body, note: "添加后默认停用");
-        projectGrid.DefaultCellStyle.BackColor = DeckTheme.Surface;
-        projectGrid.DefaultCellStyle.ForeColor = DeckTheme.Ink;
-        projectGrid.DefaultCellStyle.SelectionBackColor = DeckTheme.Surface2;
-        projectGrid.DefaultCellStyle.SelectionForeColor = DeckTheme.Ink;
-        projectGrid.DefaultCellStyle.Font = DeckTheme.Small;
-        projectGrid.DefaultCellStyle.Padding = new Padding(6, 0, 0, 0);
-        projectGrid.ColumnHeadersDefaultCellStyle.BackColor = DeckTheme.Surface;
-        projectGrid.ColumnHeadersDefaultCellStyle.ForeColor = DeckTheme.Dim;
-        projectGrid.ColumnHeadersDefaultCellStyle.SelectionBackColor = DeckTheme.Surface;
-        projectGrid.ColumnHeadersDefaultCellStyle.Font = DeckTheme.Tiny;
-        projectGrid.RowTemplate.Height = 30;
-        projectGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { HeaderText = "本机目录", Name = "dir", AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill });
-        projectGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { HeaderText = "项目 ID", Name = "id", Width = 130 });
-        projectGrid.Columns.Add(new DataGridViewTextBoxColumn
-            { HeaderText = "启用", Name = "enabled", Width = 58 });
-        DeckTheme.Row(body, projectSummary, 24);
-        DeckTheme.Row(body, projectGrid, 100, fill: true);
+        projectSummary.BackColor = DeckTheme.Surface2;
+        projectSummary.Padding = new Padding(7, 2, 7, 2);
+        projectSummary.AutoSize = true;
+        projectSummary.Dock = DockStyle.None;
+        projectSummary.Anchor = AnchorStyles.Right;
+        DeckTheme.Round(projectSummary, 9);
+        var card = Card("项目白名单", out var body, note: "添加后默认停用", action: projectSummary);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 4);
+        DeckTheme.Row(body, projectTable, 100, fill: true);
 
         var rules = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 2, RowCount = 2
+            ColumnCount = 2, RowCount = 2, Padding = new Padding(0, 4, 0, 0)
         };
-        rules.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 52));
+        rules.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 40));
         rules.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        rules.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
-        rules.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
-        rules.Controls.Add(DeckTheme.Label("允许", DeckTheme.Small, DeckTheme.Good), 0, 0);
-        rules.Controls.Add(DeckTheme.Label("只在启用的目录内读写，子目录继承父目录权限",
-            DeckTheme.Small, DeckTheme.Dim), 1, 0);
-        rules.Controls.Add(DeckTheme.Label("拒绝", DeckTheme.Small, DeckTheme.Danger), 0, 1);
-        rules.Controls.Add(DeckTheme.Label("符号链接、目录联接，以及含 .. 的越界路径",
-            DeckTheme.Small, DeckTheme.Dim), 1, 1);
-        DeckTheme.Row(body, rules, 40);
+        rules.RowStyles.Add(new RowStyle(SizeType.Absolute, 21));
+        rules.RowStyles.Add(new RowStyle(SizeType.Absolute, 21));
+        rules.Controls.Add(RuleKey("允许", DeckTheme.Good), 0, 0);
+        rules.Controls.Add(RuleText("只在启用的目录内读写，子目录继承父目录权限"), 1, 0);
+        rules.Controls.Add(RuleKey("拒绝", DeckTheme.Danger), 0, 1);
+        rules.Controls.Add(RuleText("符号链接、目录联接、含 .. 的越界路径，以及未在清单中的任何路径"), 1, 1);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 6);
+        DeckTheme.Row(body, DeckTheme.Divider(DeckTheme.Line), 1);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 6);
+        DeckTheme.Row(body, rules, 46);
 
-        var actions = DeckTheme.Actions(DeckTheme.Surface);
-        AddAction(actions, "管理项目…", ManageProjectsAsync, primary: true);
-        AddAction(actions, "刷新", () =>
+        var actions = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 1, Padding = new Padding(0, 6, 0, 0)
+        };
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var hint = DeckTheme.Label("改动对下一次任务生效；写入仍会逐条请求手机批准", DeckTheme.Tiny, DeckTheme.Dim);
+        hint.AutoEllipsis = true;
+        actions.Controls.Add(hint, 0, 0);
+        var buttons = DeckTheme.Actions(DeckTheme.Surface);
+        buttons.AutoSize = true;
+        buttons.Dock = DockStyle.None;
+        buttons.Anchor = AnchorStyles.Right;
+        AddAction(buttons, "管理项目…", ManageProjectsAsync, primary: true);
+        AddAction(buttons, "刷新", () =>
         {
             RefreshProjects();
             return Task.CompletedTask;
         });
-        DeckTheme.Row(body, actions, 38);
+        actions.Controls.Add(buttons, 1, 0);
+        DeckTheme.Row(body, actions, 42);
         return card;
+    }
+
+    private static Control RuleKey(string text, Color color) =>
+        DeckTheme.Label(text, DeckTheme.Small, color);
+
+    private static Control RuleText(string text)
+    {
+        var label = DeckTheme.Label(text, DeckTheme.Small, DeckTheme.Dim);
+        label.AutoEllipsis = true;
+        return label;
     }
 
     private Control ServiceCard()
     {
         var card = Card("常驻与自启", out var body);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 6);
         var head = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
             ColumnCount = 2, RowCount = 1
         };
-        head.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 16));
+        head.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
         head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         head.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         serviceDot.Dock = DockStyle.None;
         serviceDot.Anchor = AnchorStyles.Left;
-        serviceDot.Margin = new Padding(0, 0, 6, 0);
+        serviceDot.Margin = new Padding(0, 1, 0, 0);
         head.Controls.Add(serviceDot, 0, 0);
         serviceTitle.AutoEllipsis = true;
         head.Controls.Add(serviceTitle, 1, 0);
@@ -137,10 +146,32 @@ internal sealed partial class ReviewWindow
         serviceDetail.AutoEllipsis = true;
         serviceDetail.ForeColor = DeckTheme.Muted;
         DeckTheme.Row(body, serviceDetail, 20);
-        DeckTheme.Row(body, DeckTheme.Label("以 Windows 服务方式启动时，登录前就能连接手机。",
-            DeckTheme.Small, DeckTheme.Dim), 20);
-        DeckTheme.Row(body, DeckTheme.Label("当前由托盘进程托管；服务模式安装后可在登录前连接。",
-            DeckTheme.Small, DeckTheme.Dim), 20);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 8);
+        var note1 = DeckTheme.Label("服务模式在登录前就能连接手机；", DeckTheme.Small, DeckTheme.Dim);
+        note1.AutoEllipsis = true;
+        DeckTheme.Row(body, note1, 20);
+        var note2 = DeckTheme.Label("托盘模式需要先登录 Windows。", DeckTheme.Small, DeckTheme.Dim);
+        note2.AutoEllipsis = true;
+        DeckTheme.Row(body, note2, 20);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 8);
+        var facts = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 2
+        };
+        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
+        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
+        facts.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        facts.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        facts.Controls.Add(DeckTheme.Label("当前方式", DeckTheme.Small, DeckTheme.Dim), 0, 0);
+        var mode = DeckTheme.Label("托盘进程", DeckTheme.MonoSmall, DeckTheme.Muted);
+        mode.TextAlign = ContentAlignment.MiddleRight;
+        facts.Controls.Add(mode, 1, 0);
+        facts.Controls.Add(DeckTheme.Label("服务名", DeckTheme.Small, DeckTheme.Dim), 0, 1);
+        var serviceName = DeckTheme.Label("AgentDeckLab", DeckTheme.MonoSmall, DeckTheme.Muted);
+        serviceName.TextAlign = ContentAlignment.MiddleRight;
+        facts.Controls.Add(serviceName, 1, 1);
+        DeckTheme.Row(body, facts, 44);
         DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 100, fill: true);
         return card;
     }
@@ -149,35 +180,45 @@ internal sealed partial class ReviewWindow
     {
         var redetect = DeckTheme.Button("重新检测");
         redetect.MinimumSize = new Size(0, 24);
-        redetect.Padding = new Padding(8, 0, 8, 0);
+        redetect.Padding = new Padding(9, 0, 9, 0);
         redetect.Font = DeckTheme.Tiny;
         redetect.Margin = Padding.Empty;
+        redetect.Anchor = AnchorStyles.Right;
         redetect.Click += async (_, _) => await RunActionAsync(() => DetectToolsAsync(fill: true));
         var card = Card("编辑器检测", out var body, action: redetect);
-        DeckTheme.Row(body, EditorRow(codexDot, "Codex", codexLine, codexPathLine, "只读 · 写 · 审批 · 续接"), 50);
-        DeckTheme.Row(body, EditorRow(cursorDot, "Cursor", cursorLine, cursorPathLine, "未接入"), 50);
-        DeckTheme.Row(body, EditorRow(buddyDot, "WorkBuddy", buddyLine, buddyPathLine, "未接入"), 50);
-        var hint = DeckTheme.Label("路径由 AgentDeck 自动发现，不支持手动指定。", DeckTheme.Small, DeckTheme.Dim);
-        DeckTheme.Row(body, hint, 18);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 4);
+        DeckTheme.Row(body, EditorRow(codexDot, "Codex", codexLine, codexPathLine, "只读 · 写 · 审批 · 续接"), 44);
+        DeckTheme.Row(body, EditorRow(cursorDot, "Cursor", cursorLine, cursorPathLine, "未接入"), 44);
+        DeckTheme.Row(body, EditorRow(buddyDot, "WorkBuddy", buddyLine, buddyPathLine, "未接入"), 44);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 4);
+        var hint = DeckTheme.Label("路径由 AgentDeck 自动发现，不支持手动指定。", DeckTheme.Tiny, DeckTheme.Dim);
+        DeckTheme.Row(body, hint, 20);
         DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 100, fill: true);
         return card;
     }
 
-    private Control LogsRow()
+    private Control LogsCard()
     {
+        var card = new DeckTheme.CardPanel();
         var line = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Canvas, Margin = Padding.Empty,
-            ColumnCount = 3, RowCount = 1
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 3, RowCount = 1, Padding = new Padding(16, 0, 14, 0)
         };
-        line.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 104));
+        line.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 92));
         line.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         line.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         line.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        line.Controls.Add(DeckTheme.Label("任务日志目录", DeckTheme.Small, DeckTheme.Dim), 0, 0);
-        line.Controls.Add(DeckTheme.Input(logs, "任务日志目录"), 1, 0);
+        line.Controls.Add(DeckTheme.Label("任务日志", DeckTheme.Small, DeckTheme.Dim), 0, 0);
+        var field = DeckTheme.Input(logs, "任务日志目录");
+        field.Margin = new Padding(0, 9, 10, 9);
+        line.Controls.Add(field, 1, 0);
         var browse = DeckTheme.Button("浏览…");
-        browse.Margin = new Padding(8, 0, 0, 0);
+        browse.MinimumSize = new Size(0, 28);
+        browse.Padding = new Padding(10, 0, 10, 0);
+        browse.Font = DeckTheme.Small;
+        browse.Margin = Padding.Empty;
+        browse.Anchor = AnchorStyles.None;
         browse.Click += (_, _) =>
         {
             using var picker = new FolderBrowserDialog { Description = "选择任务日志目录", SelectedPath = LogsPath };
@@ -186,7 +227,8 @@ internal sealed partial class ReviewWindow
             SavePaths();
         };
         line.Controls.Add(browse, 2, 0);
-        return line;
+        card.Controls.Add(line);
+        return card;
     }
 
     private static Control EditorRow(DeckTheme.StatusDot dot, string name, Label version, Label path,
@@ -197,14 +239,14 @@ internal sealed partial class ReviewWindow
             Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
             ColumnCount = 3, RowCount = 2
         };
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 16));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        row.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-        row.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
+        row.RowStyles.Add(new RowStyle(SizeType.Absolute, 21));
+        row.RowStyles.Add(new RowStyle(SizeType.Absolute, 17));
         dot.Dock = DockStyle.None;
         dot.Anchor = AnchorStyles.Left;
-        dot.Margin = new Padding(0, 2, 6, 0);
+        dot.Margin = new Padding(0, 1, 0, 0);
         row.SetRowSpan(dot, 2);
         row.Controls.Add(dot, 0, 0);
         var head = new TableLayoutPanel
@@ -221,17 +263,21 @@ internal sealed partial class ReviewWindow
         title.Margin = new Padding(0, 0, 8, 0);
         head.Controls.Add(title, 0, 0);
         version.TextAlign = ContentAlignment.MiddleRight;
+        version.Font = DeckTheme.MonoMicro;
         head.Controls.Add(version, 1, 0);
         row.Controls.Add(head, 1, 0);
         path.AutoEllipsis = true;
+        path.Font = DeckTheme.Small;
         row.Controls.Add(path, 1, 1);
         var caps = DeckTheme.Label(capabilities, DeckTheme.Tiny, DeckTheme.Dim);
+        // Row 0 only, with AutoSize kept on so the AutoSize column can measure
+        // the text: a Dock=Fill label reports the width it was handed, and the
+        // capability list was clipped to "只读 · 写 · 审批 · 续".
         caps.AutoSize = true;
         caps.Dock = DockStyle.None;
-        caps.Anchor = AnchorStyles.Right;
+        caps.Anchor = AnchorStyles.Top | AnchorStyles.Right;
         caps.TextAlign = ContentAlignment.MiddleRight;
-        caps.Margin = new Padding(8, 0, 0, 0);
-        row.SetRowSpan(caps, 2);
+        caps.Margin = new Padding(12, 2, 0, 0);
         row.Controls.Add(caps, 2, 0);
         return row;
     }
@@ -250,11 +296,13 @@ internal sealed partial class ReviewWindow
 
     private void RefreshProjects()
     {
-        projectGrid.Rows.Clear();
         var path = ProjectsPath;
         if (!File.Exists(path))
         {
-            projectSummary.Text = "还没有授权清单。点「管理项目…」添加第一个目录。";
+            projectTable.SetRows([]);
+            projectSummary.Text = "0 个目录";
+            projectSummary.ForeColor = DeckTheme.Dim;
+            projectSummary.BackColor = DeckTheme.Surface2;
             return;
         }
         try
@@ -263,25 +311,33 @@ internal sealed partial class ReviewWindow
             if (!document.RootElement.TryGetProperty("projects", out var projects) ||
                 projects.ValueKind != JsonValueKind.Array)
             {
-                projectSummary.Text = "授权清单格式不正确。";
+                projectTable.SetRows([]);
+                projectSummary.Text = "清单格式不正确";
+                projectSummary.ForeColor = DeckTheme.Danger;
+                projectSummary.BackColor = DeckTheme.Tint(DeckTheme.Danger);
                 return;
             }
-            int enabled = 0;
+            var rows = new List<(string Directory, string Id, bool Enabled)>();
             foreach (var project in projects.EnumerateArray())
             {
                 var id = project.TryGetProperty("id", out var i) ? i.GetString() ?? "" : "";
                 var directory = project.TryGetProperty("directory", out var d) ? d.GetString() ?? "" : "";
                 var on = project.TryGetProperty("enabled", out var e) && e.GetBoolean();
-                if (on) enabled++;
-                int index = projectGrid.Rows.Add(directory, id, on ? "启用" : "停用");
-                projectGrid.Rows[index].Cells[2].Style.ForeColor = on ? DeckTheme.Good : DeckTheme.Dim;
-                projectGrid.Rows[index].Cells[1].Style.ForeColor = DeckTheme.Muted;
+                rows.Add((directory, id, on));
             }
-            projectSummary.Text = $"{projectGrid.Rows.Count} 个目录 · {enabled} 个启用";
+            projectTable.SetRows(rows);
+            int enabled = rows.Count(row => row.Enabled);
+            projectSummary.Text = $"{rows.Count} 个目录";
+            projectSummary.ForeColor = enabled > 0 ? DeckTheme.Good : DeckTheme.Dim;
+            projectSummary.BackColor = enabled > 0 ? DeckTheme.Tint(DeckTheme.Good) : DeckTheme.Surface2;
         }
         catch (Exception error) when (error is IOException or JsonException)
         {
-            projectSummary.Text = $"读取授权清单失败：{error.Message}";
+            projectTable.SetRows([]);
+            projectSummary.Text = "读取失败";
+            projectSummary.ForeColor = DeckTheme.Danger;
+            projectSummary.BackColor = DeckTheme.Tint(DeckTheme.Danger);
+            status.Text = $"读取授权清单失败：{error.Message}";
         }
     }
 
@@ -321,7 +377,7 @@ internal sealed partial class ReviewWindow
     /// unusable" result is a warning, not a success — the stripped Codex copy
     /// starts fine and then fails every shell tool, which is worse than missing.
     /// </summary>
-    private async Task DetectToolsAsync(bool fill)
+    private async Task DetectToolsAsync(bool fill, bool quiet = false)
     {
         try
         {
@@ -361,10 +417,94 @@ internal sealed partial class ReviewWindow
                 codexVersion = usable ? version : "";
                 statusCodex.Text = usable && version.Length > 0 ? $"CODEX {version}" : "CODEX —";
                 if (usable && fill && codexPath.Length == 0) codexPath = path;
-                if (!usable)
+                if (!usable && !quiet)
                     status.Text = $"Codex 不可用：{(issue.Length > 0 ? issue : "未安装")}";
             }
         }
-        catch (Exception error) { status.Text = $"检测失败。{error.Message}"; }
+        catch (Exception error)
+        {
+            if (!quiet) status.Text = $"检测失败。{error.Message}";
+        }
+    }
+
+    // The whitelist is painted rather than a DataGridView: the grid's header
+    // chrome and cell padding cannot be fully themed, and at this size the
+    // default look reads as an editable text box rather than a table.
+    private sealed class WhitelistView : ScrollableControl
+    {
+        private readonly List<(string Directory, string Id, bool Enabled)> rows = [];
+
+        internal WhitelistView()
+        {
+            SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
+                     ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+            BackColor = DeckTheme.Surface;
+            AutoScroll = true;
+        }
+
+        internal void SetRows(IEnumerable<(string Directory, string Id, bool Enabled)> value)
+        {
+            rows.Clear();
+            rows.AddRange(value);
+            AutoScrollMinSize = new Size(0, 28 + rows.Count * 36);
+            AutoScrollPosition = Point.Empty;
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            using (var background = new SolidBrush(DeckTheme.Surface)) g.FillRectangle(background, ClientRectangle);
+            const int left = 5;
+            int right = Width - 4 - (VerticalScroll.Visible ? SystemInformation.VerticalScrollBarWidth : 0);
+            const int idWidth = 118;
+            const int onWidth = 60;
+            int headerHeight = 28;
+            using (var line = new Pen(DeckTheme.Line2))
+                g.DrawLine(line, 0, headerHeight - 1, Width, headerHeight - 1);
+            TextRenderer.DrawText(g, "本机目录", DeckTheme.Tiny, new Point(left, 8), DeckTheme.Dim,
+                TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, "项目 ID", DeckTheme.Tiny, new Point(right - idWidth - onWidth, 8),
+                DeckTheme.Dim, TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, "启用", DeckTheme.Tiny, new Point(right - onWidth + 6, 8),
+                DeckTheme.Dim, TextFormatFlags.NoPadding);
+
+            if (rows.Count == 0)
+            {
+                TextRenderer.DrawText(g, "还没有授权清单", DeckTheme.Small,
+                    new Point(left, headerHeight + 14), DeckTheme.Muted, TextFormatFlags.NoPadding);
+                TextRenderer.DrawText(g, "点「管理项目…」添加第一个目录", DeckTheme.Small,
+                    new Point(left, headerHeight + 36), DeckTheme.Dim, TextFormatFlags.NoPadding);
+                return;
+            }
+
+            var state = g.Save();
+            g.SetClip(new Rectangle(0, headerHeight, Width, Height - headerHeight));
+            int y = headerHeight + AutoScrollPosition.Y;
+            foreach (var (directory, id, enabled) in rows)
+            {
+                if (y > Height) break;
+                if (y + 36 < headerHeight)
+                {
+                    y += 36;
+                    continue;
+                }
+                int cellY = y + 11;
+                int directoryWidth = Math.Max(40, Width - idWidth - onWidth - left - 12);
+                TextRenderer.DrawText(g, directory, DeckTheme.MonoSmall,
+                    new Rectangle(left, cellY, directoryWidth, 18), DeckTheme.Muted,
+                    TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                TextRenderer.DrawText(g, id, DeckTheme.MonoMicro,
+                    new Rectangle(right - idWidth - onWidth, cellY + 1, idWidth, 18), DeckTheme.Dim,
+                    TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                TextRenderer.DrawText(g, enabled ? "启用" : "停用", DeckTheme.Small,
+                    new Rectangle(right - onWidth + 6, cellY, onWidth - 8, 18),
+                    enabled ? DeckTheme.Good : DeckTheme.Dim, TextFormatFlags.NoPadding);
+                using (var line = new Pen(DeckTheme.Line2))
+                    g.DrawLine(line, 0, y + 35, Width, y + 35);
+                y += 36;
+            }
+            g.Restore(state);
+        }
     }
 }

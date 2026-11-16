@@ -14,6 +14,15 @@ internal static class Smoke
         var hasSettings = File.Exists(settings);
         using var main = Create(ui, "ReviewWindow");
         _ = main.Handle;
+        // Detection runs in the background at startup; the screenshots need its
+        // result, so the smoke waits for it instead of racing it.
+        var detect = main.GetType().GetMethod("DetectToolsAsync", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        var detection = (Task)detect.Invoke(main, [true, true])!;
+        while (!detection.IsCompleted) Application.DoEvents();
+        // The real app refreshes every two seconds; the smoke has no message
+        // loop, so it asks once after detection has filled the version.
+        main.GetType().GetMethod("RefreshStatePage", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(main, null);
         var select = main.GetType().GetMethod("SelectPage", BindingFlags.Instance | BindingFlags.NonPublic)!;
         var names = new[] { "状态", "任务", "设置" };
         for (int index = 0; index < names.Length; index++)
@@ -41,7 +50,11 @@ internal static class Smoke
         var manage = All(main).OfType<Button>().Single(button => button.Text == "管理项目…");
         if (!OnScreen(manage, main)) throw new InvalidOperationException("Manage projects button clipped.");
         select.Invoke(main, [0]);
-        All(main).OfType<Label>().First(label => label.Text == Environment.MachineName).Text = "DESKTOP";
+        // The header is painted, so the machine name is a property now. The
+        // screenshot uses a neutral name instead of the real host name.
+        var bar = main.GetType().GetField("topBar", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(main)!;
+        bar.GetType().GetProperty("Host", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(bar, "DESKTOP");
         if (!hasSettings) Render(main, Path.Combine(args[0], "state.png"));
         select.Invoke(main, [1]);
         main.PerformLayout();
@@ -51,36 +64,13 @@ internal static class Smoke
         main.PerformLayout();
         if (!hasSettings)
         {
+            // Detection is real here: the smoke waits for it at startup, so this
+            // render proves the rows carry a version and a resolved path instead
+            // of the "尚未检测" placeholder.
+            var version = (Label)main.GetType().GetField("codexLine", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .GetValue(main)!;
+            if (!version.Text.Contains('.')) throw new InvalidOperationException("Codex version not detected: " + version.Text);
             Render(main, Path.Combine(args[0], "settings.png"));
-            // Show what a real detection looks like: a version, the full path
-            // and a green dot. The layout bug this guards against is a long
-            // path pushing the capability tags out of the row.
-            var theme = ui.GetType("AgentDeck.Tray.DeckTheme")!;
-            var good = (Color)theme.GetField("Good", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.GetValue(null)!;
-            var lines = All(main).OfType<Label>().Where(label => label.Text == "尚未检测").ToArray();
-            if (lines.Length != 3) throw new InvalidOperationException("Detection rows: " + lines.Length);
-            lines[0].Text = "0.167.0-alpha.4.1";
-            lines[1].Text = "0.42.3";
-            lines[2].Text = "1.7.2";
-            foreach (var (field, value) in new[]
-                     {
-                         ("codexPathLine", @"…\9e1da79431da526b\codex.exe"),
-                         ("cursorPathLine", @"…\cursor\Cursor.exe"),
-                         ("buddyPathLine", @"…\WorkBuddy\WorkBuddy.exe")
-                     })
-            {
-                var label = (Label)main.GetType().GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!
-                    .GetValue(main)!;
-                label.Text = value;
-            }
-            foreach (var name in new[] { "codexDot", "cursorDot", "buddyDot" })
-            {
-                var dot = main.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(main)!;
-                dot.GetType().GetProperty("Color", BindingFlags.Instance | BindingFlags.NonPublic)!
-                    .SetValue(dot, good);
-            }
-            main.PerformLayout();
-            Render(main, Path.Combine(args[0], "settings-detected.png"));
         }
         var pairButton = All(main).OfType<Button>().Single(b => b.Text == "显示配对二维码");
         if (!OnScreen(pairButton, main)) throw new InvalidOperationException("Pairing button clipped.");
@@ -102,9 +92,12 @@ internal static class Smoke
         click.Invoke(register, [EventArgs.Empty]);
         if (relay.DialogResult != DialogResult.OK) throw new InvalidOperationException("Valid relay form rejected.");
         using var project = Create(ui, "ProjectEditor", Path.Combine(args[0], "smoke-only.json"));
+        Render(project, Path.Combine(args[0], "project.png"));
         using var pair = Create(ui, "PairingWindow", "{\"sample\":\"for layout only\"}",
             (Func<Task<string>>)(() => Task.FromResult("")), (Func<string, Task<string>>)(_ => Task.FromResult("")));
-        if (All(pair).OfType<PictureBox>().Single().Image is null) throw new InvalidOperationException("QR missing.");
+        var qr = All(pair).OfType<Control>().Single(control => control.AccessibleName == "手机配对二维码");
+        var qrImage = qr.GetType().GetField("image", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(qr);
+        if (qrImage is null) throw new InvalidOperationException("QR missing.");
         Render(pair, Path.Combine(args[0], "pairing.png"));
         Console.WriteLine("PASS: three-page shell, minimum-size settings fields, Relay validation and token masking, project editor, QR dialog.");
     }
@@ -135,7 +128,7 @@ internal static class Smoke
             var rowCtor = rowType.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
                 .First(c => c.GetParameters().Length == 1);
             var row = (Control)rowCtor.Invoke([item]);
-            row.Height = 78;
+            row.Height = 84;
             queue.Controls.Add(row);
             index++;
             first ??= row;
@@ -145,6 +138,8 @@ internal static class Smoke
         if (first is not null) select.Invoke(main, [first]);
         var count = main.GetType().GetField("queueCount", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(main) as Label;
         if (count is not null) count.Text = "1 条未结束 · 共 2 条";
+        var chip = main.GetType().GetField("queueChip", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(main) as Label;
+        if (chip is not null) chip.Text = "1";
         main.PerformLayout();
     }
 
