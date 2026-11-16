@@ -231,7 +231,10 @@ internal sealed partial class ReviewWindow
     {
         var body = Card();
         body.AutoScroll = true;
-        DeckTheme.Row(body, PathField("Codex 可执行文件", codex, false), 69);
+        // Detection lives inside the Codex row instead of its own section: the
+        // settings card has to keep the save button visible at the minimum
+        // window size, and an extra block pushed it out of view.
+        DeckTheme.Row(body, CodexPathField(), 63);
         DeckTheme.Row(body, PathField("Codex 配置目录", home, true), 69);
         DeckTheme.Row(body, PathField("项目授权清单", projects, false), 69);
         DeckTheme.Row(body, PathField("任务收件箱", inbox, true), 69);
@@ -245,7 +248,7 @@ internal sealed partial class ReviewWindow
         DeckTheme.Row(body, new Panel(), 8);
         DeckTheme.Row(body, actions, 40);
         DeckTheme.Row(body, new Panel(), 100, fill: true);
-        return Page("设置", "配置本机 Codex 和任务数据的位置。运行中的 Agent 会在下次启动时读取路径设置。", body);
+        return Page("设置", "路径留空时由 Agent 自动检测；检测不会覆盖你手填的路径。", body);
     }
 
     private void UpdateConnection()

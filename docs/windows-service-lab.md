@@ -26,6 +26,20 @@
 
 检查启动 `codex app-server` 的 stdio 接口，完成 `initialize` 和 `initialized`，然后用 `account/read` 读取本机账号状态，关闭进程。输出只包含 `account_configured` 和 `openai_auth_required` 两个布尔值。全新 Codex home 可以通过握手，但需要 OpenAI 登录时会显示 `account_configured=false`。这一步不刷新凭据，也不创建会话或发起模型任务。 [Codex App Server 文档](https://learn.chatgpt.com/docs/app-server)
 
+## 自动检测本机工具
+
+`-codex` 与 `-codex-home` 都可以省略，省略时由 Agent 自己找；`detect` 单独输出三款软件的结果，托盘「设置」页的「检测」按钮读的就是它。
+
+```powershell
+.\bin\agentdeck-lab.exe detect
+```
+
+每条结果包含 `name`、`path`、`source`、`usable`，不可用时多一个 `problem`。查找顺序是：显式配置、Codex 的每构建安装目录（`%LOCALAPPDATA%\OpenAI\Codex\bin\*`）、注册表卸载项、开始菜单快捷方式、各固定磁盘的 `Program Files`、`PATH`。装在 `D:\00-Softwares` 这类非默认目录的软件靠注册表和快捷方式找到，不需要手填。
+
+一条硬性判据：Codex 必须与 `codex-code-mode-host.exe` 同目录。`%USERPROFILE%\.codex\.sandbox-bin\codex.exe` 是 Codex 自用的裁剪副本，缺这个宿主程序，任务里的 shell 工具会报 `failed to spawn code-mode host ... (os error 2)`，而且这一轮仍然正常结束——表现出来是手机永远收不到审批请求。检测会把这类副本标成 `usable: false` 并写明原因，不会静默选中它。
+
+托盘启动 Agent 时，只有填了才传 `-codex` / `-codex-home`；留空即由 Agent 自动检测。
+
 ## 本地 Codex 任务与输出
 
 任务由 Agent 自己消费，不需要在本机点批准。启动 Agent 时传入 `-task-inbox`、`-task-logs`、`-projects` 和 `-codex`，后台单线程按提交时间取出最旧的一条，写任务日志、跑一轮 Codex，结束时记录最终状态。手机提交后即开始执行，这正是「人离开电脑，Codex 继续干活」的前提。

@@ -20,7 +20,7 @@ internal static class Smoke
         {
             select.Invoke(main, [index]);
             main.PerformLayout();
-            var page = All(main).OfType<Label>().First(label => label.Text == (index == 1 ? "任务审核" : names[index]));
+            var page = All(main).OfType<Label>().First(label => label.Text == names[index]);
             if (page.Width < 450) throw new InvalidOperationException("Page width: " + names[index]);
         }
         main.Size = main.MinimumSize;
@@ -34,7 +34,21 @@ internal static class Smoke
         All(main).OfType<Label>().Single(label => label.Text == Environment.MachineName).Text = "DESKTOP";
         if (!hasSettings) Render(main, Path.Combine(args[0], "connection.png"));
         select.Invoke(main, [4]);
-        if (!hasSettings) Render(main, Path.Combine(args[0], "settings.png"));
+        if (!hasSettings)
+        {
+            Render(main, Path.Combine(args[0], "settings.png"));
+            // Also capture the detected state: status text, a filled path and
+            // two buttons on one line is the case most likely to overflow.
+            var theme = ui.GetType("AgentDeck.Tray.DeckTheme")!;
+            var good = (Color)theme.GetField("Good", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.GetValue(null)!;
+            All(main).OfType<TextBox>().Single(t => t.AccessibleName == "Codex 可执行文件").Text =
+                @"C:\Users\hello\AppData\Local\OpenAI\Codex\bin\9e1da79431da526b\codex.exe";
+            var state = All(main).OfType<Label>().Single(l => l.Text == "未检测");
+            state.Text = "✓ 可用";
+            state.ForeColor = good;
+            main.PerformLayout();
+            Render(main, Path.Combine(args[0], "settings-detected.png"));
+        }
         using var relay = Create(ui, "RelayWindow");
         _ = relay.Handle;
         var register = All(relay).OfType<Button>().Single(b => b.Text == "注册电脑");

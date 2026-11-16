@@ -292,7 +292,7 @@ func (a *agentRuntime) execute(ctx context.Context, task *queuedTask) {
 	policy := a.peer.codex
 	policy.policy = a.peer.policy
 	policy.projectID = task.Record.ProjectID
-	resolved, err := policy.resolve()
+	resolved, source, err := policy.resolve()
 	if err != nil || resolved.ProjectDir != task.Record.Directory {
 		a.logger.Printf("task %s can no longer start in its authorized project", shortID(task.TaskID))
 		if err := journal.Finish("failed"); err != nil {
@@ -300,6 +300,7 @@ func (a *agentRuntime) execute(ctx context.Context, task *queuedTask) {
 		}
 		return
 	}
+	a.logger.Printf("task %s uses Codex %s (source: %s)", shortID(task.TaskID), resolved.Executable, source)
 	a.setRunning(&runningTask{TaskID: task.TaskID, ProjectID: task.Record.ProjectID, Started: time.Now()})
 	defer a.setRunning(nil)
 	a.logger.Printf("task %s started in %s", shortID(task.TaskID), task.Record.ProjectID)

@@ -97,6 +97,7 @@ internal sealed partial class ReviewWindow : Form
     private readonly TextBox logs = new();
     private readonly TextBox codex = new();
     private readonly TextBox home = new();
+    private readonly Label codexState = DeckTheme.Label("未检测", DeckTheme.Small, DeckTheme.Muted);
     private readonly ListBox pending = new() { Dock = DockStyle.Fill, AccessibleName = "任务队列" };
     private readonly TextBox detail = new()
     {
@@ -118,8 +119,9 @@ internal sealed partial class ReviewWindow : Form
         };
         LoadPaths();
         UpdateConnection();
-        Shown += (_, _) =>
+        Shown += async (_, _) =>
         {
+            if (codex.Text.Trim().Length == 0) await DetectToolsAsync(true);
             try
             {
                 if (!File.Exists(Path.Combine(DeviceDirectory, "registered-device")) || !File.Exists(AgentConfig)) return;
@@ -171,6 +173,11 @@ internal sealed partial class ReviewWindow : Form
         Directory.CreateDirectory(RequirePath(logs));
         SavePaths();
         args.AddRange(["-projects", RequirePath(projects), "-task-inbox", RequirePath(inbox), "-task-logs", RequirePath(logs)]);
+        // These two were collected on the settings page but never passed on, so
+        // the Agent silently ignored whatever the user picked. Passing them only
+        // when filled leaves detection in charge of an empty field.
+        if (codex.Text.Trim().Length > 0) args.AddRange(["-codex", RequirePath(codex)]);
+        if (home.Text.Trim().Length > 0) args.AddRange(["-codex-home", RequirePath(home)]);
         foreach (var arg in args) start.ArgumentList.Add(arg);
         agent?.Dispose();
         agent = Process.Start(start) ?? throw new InvalidOperationException("无法启动 Agent。");
@@ -194,6 +201,96 @@ internal sealed partial class ReviewWindow : Form
                 "-fingerprint", fingerprint));
         if (dialog.ShowDialog(this) == DialogResult.OK)
             status.Text = "手机已配对。请在手机刷新项目。";
+    }
+
+    /// <summary>
+    /// The Codex path row with detection built in. The status sits on the title
+    /// line and the detect button shares the input line, so detection costs no
+    /// vertical space and the save button stays visible at the minimum size.
+    /// </summary>
+    private Control CodexPathField()
+    {
+        var row = DeckTheme.Table();
+        var header = DeckTheme.Table();
+        header.ColumnCount = 2;
+        header.RowCount = 1;
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        header.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        header.Controls.Add(DeckTheme.Label("Codex 可执行文件"), 0, 0);
+        codexState.TextAlign = ContentAlignment.MiddleRight;
+        codexState.AutoEllipsis = true;
+        codexState.Margin = new Padding(12, 0, 0, 0);
+        header.Controls.Add(codexState, 1, 0);
+        DeckTheme.Row(row, header, 26);
+
+        var line = DeckTheme.Table();
+        line.ColumnCount = 3;
+        line.RowCount = 1;
+        line.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        line.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        line.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        line.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        line.Controls.Add(DeckTheme.Input(codex, "Codex 可执行文件"), 0, 0);
+        var browse = DeckTheme.Button("浏览…");
+        browse.AccessibleName = "浏览 Codex 可执行文件";
+        browse.Margin = new Padding(8, 0, 0, 0);
+        browse.Click += (_, _) =>
+        {
+            using var dialog = new OpenFileDialog { Title = "Codex 可执行文件", Filter = "可执行文件 (*.exe)|*.exe" };
+            if (dialog.ShowDialog(this) != DialogResult.OK) return;
+            codex.Text = dialog.FileName;
+            codexState.Text = "已手填，点「检测」核对";
+            codexState.ForeColor = DeckTheme.Muted;
+        };
+        line.Controls.Add(browse, 1, 0);
+        var detect = DeckTheme.Button("检测");
+        detect.AccessibleName = "自动检测本机 Codex";
+        detect.Margin = new Padding(6, 0, 0, 0);
+        detect.Click += async (_, _) => await DetectToolsAsync(true);
+        line.Controls.Add(detect, 2, 0);
+        DeckTheme.Row(row, line, 37);
+        return row;
+    }
+
+    /// <summary>
+    /// Fills the Codex path from what is really installed and reports the other
+    /// editors. Detection never overwrites a path the user typed by hand, and a
+    /// "found but unusable" result is a warning, not a success.
+    /// </summary>
+    private async Task DetectToolsAsync(bool fill)
+    {
+        try
+        {
+            using var data = JsonDocument.Parse(await RunAsync("detect"));
+            var found = new List<string>();
+            var usable = false;
+            var problem = "没有找到可用的 Codex。";
+            foreach (var tool in data.RootElement.EnumerateArray())
+            {
+                var name = tool.GetProperty("name").GetString() ?? "";
+                var path = tool.TryGetProperty("path", out var rawPath) ? rawPath.GetString() ?? "" : "";
+                var ok = tool.GetProperty("usable").GetBoolean();
+                var issue = tool.TryGetProperty("problem", out var rawProblem) ? rawProblem.GetString() ?? "" : "";
+                if (name == "codex")
+                {
+                    usable = ok;
+                    if (!ok) problem = issue.Length > 0 ? issue : problem;
+                    if (ok && fill && codex.Text.Trim().Length == 0) codex.Text = path;
+                    continue;
+                }
+                if (ok) found.Add(name == "cursor" ? "Cursor" : "WorkBuddy");
+            }
+            var others = found.Count > 0 ? $"，同时找到 {string.Join("、", found)}" : "";
+            // The title row only has room for a verdict; the reason and the
+            // other editors go to the status bar, which has the full width.
+            codexState.Text = usable ? "✓ 可用" : "⚠ 不可用";
+            codexState.ForeColor = usable ? DeckTheme.Good : DeckTheme.Warning;
+            status.Text = usable
+                ? $"已检测到可用的 Codex{others}。"
+                : $"未找到可用的 Codex：{problem}";
+        }
+        catch (Exception error) { status.Text = $"检测失败。{error.Message}"; }
     }
 
     private void LoadPaths()

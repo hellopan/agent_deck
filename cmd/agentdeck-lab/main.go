@@ -21,6 +21,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/hellopan/agent_deck/internal/agentfind"
 	"github.com/hellopan/agent_deck/internal/codexprobe"
 	"github.com/hellopan/agent_deck/internal/projects"
 	"github.com/hellopan/agent_deck/internal/transport"
@@ -45,7 +46,7 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
-	const usage = "usage: agentdeck-lab {init|relay|enroll|agent|pair-invite|pair-confirm|probe|projects|queue|submit|task-receipt|approvals|approve|inbox|cancel-task|remote-cancel|task-log|service|codex-check} [options]"
+	const usage = "usage: agentdeck-lab {init|relay|enroll|agent|pair-invite|pair-confirm|probe|projects|queue|submit|task-receipt|approvals|approve|inbox|cancel-task|remote-cancel|task-log|service|codex-check|detect} [options]"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
@@ -186,6 +187,12 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(queueView{Items: items})
+	case "detect":
+		hint := options.String("codex", "", "absolute path to Codex CLI")
+		if err := parseFlags(options, args[1:]); err != nil {
+			return err
+		}
+		return json.NewEncoder(os.Stdout).Encode(agentfind.DetectAll(*hint))
 	case "service":
 		name := options.String("name", "AgentDeckLab", "Windows service name registered with SCM")
 		path := options.String("config", "", "absolute endpoint configuration path")
@@ -225,7 +232,7 @@ func addCodexOptions(options *flag.FlagSet) *codexOptions {
 }
 
 func checkCodex(ctx context.Context, config codexOptions, logger *log.Logger) error {
-	resolved, err := config.resolve()
+	resolved, source, err := config.resolve()
 	if err != nil {
 		return err
 	}
@@ -233,18 +240,50 @@ func checkCodex(ctx context.Context, config codexOptions, logger *log.Logger) er
 	if err != nil {
 		return err
 	}
-	logger.Printf("Codex stdio initialized; account_configured=%t openai_auth_required=%t project_id=%s", status.AccountConfigured, status.OpenAIAuthRequired, config.projectID)
+	logger.Printf("Codex stdio initialized; executable=%s source=%s account_configured=%t openai_auth_required=%t project_id=%s",
+		resolved.Executable, source, status.AccountConfigured, status.OpenAIAuthRequired, config.projectID)
 	return nil
 }
 
-func (config codexOptions) resolve() (codexprobe.Config, error) {
+// resolve turns flags into one concrete Codex invocation. An empty -codex is
+// not a configuration error: the installed build is detected instead, because
+// making the user paste a path is the friction this project exists to remove.
+func (config codexOptions) resolve() (codexprobe.Config, string, error) {
 	directory, err := projects.Resolve(config.policy, config.projectID)
 	if err != nil {
-		return codexprobe.Config{}, fmt.Errorf("authorize project: %w", err)
+		return codexprobe.Config{}, "", fmt.Errorf("authorize project: %w", err)
 	}
-	return codexprobe.Config{
-		Executable: config.executable, ProjectDir: directory, CodexHome: config.home,
-	}, nil
+	executable, source, err := config.findCodex()
+	if err != nil {
+		return codexprobe.Config{}, "", err
+	}
+	home := config.home
+	if home == "" {
+		// Account state and session rollouts live here. Every turn of a
+		// conversation must use the same home, or "接着说" resumes nothing.
+		userHome, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return codexprobe.Config{}, "", fmt.Errorf("locate the Codex home: %w", homeErr)
+		}
+		home = filepath.Join(userHome, ".codex")
+	}
+	return codexprobe.Config{Executable: executable, ProjectDir: directory, CodexHome: home}, source, nil
+}
+
+// findCodex returns the executable and the name of the source it came from.
+func (config codexOptions) findCodex() (string, string, error) {
+	if config.executable != "" {
+		return config.executable, "config", nil
+	}
+	tool := agentfind.Detect(agentfind.Codex, "")
+	if !tool.Usable {
+		where := tool.Path
+		if where == "" {
+			where = "没有找到安装位置"
+		}
+		return "", "", fmt.Errorf("Codex 不可用：%s（%s）；可用 -codex 手动指定", tool.Problem, where)
+	}
+	return tool.Path, tool.Source, nil
 }
 
 func readPromptFile(taskPath string, maxBytes int64) ([]byte, error) {
