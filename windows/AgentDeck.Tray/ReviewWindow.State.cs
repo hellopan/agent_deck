@@ -295,10 +295,15 @@ internal sealed partial class ReviewWindow
     private void RefreshStatePage()
     {
         bool registered = DeviceRegistered;
-        bool running = agent is { HasExited: false };
+        // Two ways to be reachable: the process this window started, or the
+        // service that starts before anyone logs in. Only the first has an
+        // uptime this window can measure.
+        bool child = agent is { HasExited: false };
+        var service = ServiceControl.Query();
+        bool running = child || service.Running;
         var id = DeviceIdText();
         var shortId = DeviceShort(id);
-        var uptime = running ? DateTime.Now - agent!.StartTime : TimeSpan.Zero;
+        var uptime = child ? DateTime.Now - agent!.StartTime : TimeSpan.Zero;
 
         topBar.Host = Environment.MachineName;
         topBar.Device = registered ? shortId : "";
@@ -313,16 +318,17 @@ internal sealed partial class ReviewWindow
         channelDot.Color = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
         channelTitle.Text = running ? "已就绪" : registered ? "已停止" : "未注册";
         channelAddr.Text = RelayEndpoint() is { Length: > 0 } url ? url : "尚未配置 Relay";
-        channelSince.Text = running
+        channelSince.Text = child
             ? $"Agent 进程已运行 {FormatSpan(uptime)} · 退出后手机立即断开"
+            : service.Running ? "由 Windows 服务托管 · 登录前也能连接"
             : registered ? "Agent 未运行。重启托盘后会重新连接。" : "先配置 Relay 地址与注册令牌，手机才能连接。";
 
-        SetMetric(metricUptime, running ? FormatSpan(uptime) : "未运行", !running);
+        SetMetric(metricUptime, child ? FormatSpan(uptime) : running ? "服务托管" : "未运行", !running);
         SetMetric(metricDevice, registered ? shortId : "未注册", !registered);
         SetMetric(metricRegistered,
             RegisteredAt() is { } at ? at.ToString("MM-dd HH:mm") : "未注册", RegisteredAt() is null);
         asideVersion.Text = codexVersion is { Length: > 0 } version ? version : "—";
-        asideUptime.Text = running ? FormatSpan(uptime) : "未运行";
+        asideUptime.Text = child ? FormatSpan(uptime) : running ? "服务托管" : "未运行";
 
         SetValue(identityMachine, Environment.MachineName);
         SetValue(identityDevice, registered ? shortId : "未注册");

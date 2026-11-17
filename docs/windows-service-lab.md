@@ -142,6 +142,18 @@ Codex、Cursor、WorkBuddy 的路径由托盘自动发现，不提供手动填�
 
 ## 在 Windows 测试机注册服务
 
+有两条路径。托盘「设置 → 常驻与自启 → 安装服务」会带上当前的配置、配对目录、项目清单和日志路径，注册为 `LocalSystem` 账户的自启服务；命令行的等价写法是：
+
+```powershell
+agentdeck-task-lab.exe service-install -exe <Agent 可执行文件> -config <agent.local.json> -pairing-dir <配对目录> -device <设备 ID> -log <service.log> -task-logs <日志目录> -task-inbox <收件箱> -projects <projects.json> [-codex <codex.exe>]
+```
+
+两者都需要管理员权限：托盘会弹 UAC，命令行要在提权的终端里运行。`service-uninstall` 先停服务再删除，避免留下一个仍在连 Relay 的进程。安装服务后托盘不再启动自己的 Agent，否则同一设备身份会有两条连接，手机可能落到任意一条。
+
+`-pairing-dir` 是必须的：服务靠这个目录判定哪些手机已配对，缺了它任何手机都连不上。服务账户是系统账户，能读当前用户目录下的配置和配对文件，所以路径不用搬。
+
+下面这条是手工用 `sc.exe` 注册的低权限版本，用来验证服务账户权限不足时的行为。
+
 1. 先按 [Relay 原型文档](transport-prototype.md) 生成实验配置并启动 Relay。将 Windows 可执行文件放到由管理员维护的安装目录，仅复制分配给测试电脑的 Agent 配置。
 2. 为实验服务账户授予可执行文件、Agent 配置和项目授权清单的读取权限，并为独立日志目录授予写入权限。若同时跑 Codex 检查，确保服务账户有权执行安装的 Codex、访问测试项目并使用其专属的 Codex home。Codex home 权限应限制为该账户和管理员。使用 `LocalService` 可验证低权限启动与传输，正式接入使用独立的低权限账户和凭据。 [Microsoft LocalService 说明](https://learn.microsoft.com/en-us/windows/win32/services/localservice-account)
 3. 在测试机的管理员 PowerShell 7 中，替换下面的绝对路径后注册服务。只验证 Relay 时，去掉 `-codex`、`-projects`、`-project-id` 和 `-codex-home` 参数。

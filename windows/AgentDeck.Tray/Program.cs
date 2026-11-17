@@ -176,6 +176,14 @@ internal sealed partial class ReviewWindow : Form
     private void StartAgent(string id)
     {
         if (agent is { HasExited: false }) return;
+        // A registered service owns the relay connection. Running a second agent
+        // on the same device identity would make the phone hit either one.
+        if (ServiceControl.Query().Installed)
+        {
+            agent?.Dispose();
+            agent = null;
+            return;
+        }
         Directory.CreateDirectory(PairingDirectory);
         var start = new ProcessStartInfo(ExecutablePath) { UseShellExecute = false, CreateNoWindow = true };
         var args = new List<string> { "agent", "-config", AgentConfig, "-device", id, "-pairing-dir", PairingDirectory };
@@ -191,6 +199,18 @@ internal sealed partial class ReviewWindow : Form
         foreach (var arg in args) start.ArgumentList.Add(arg);
         agent?.Dispose();
         agent = Process.Start(start) ?? throw new InvalidOperationException("无法启动 Agent。");
+    }
+
+    // Used when handing the connection over to the service, or back to the tray.
+    private void StopAgent()
+    {
+        if (agent is { HasExited: false })
+        {
+            try { agent.Kill(entireProcessTree: true); }
+            catch (InvalidOperationException) { }
+        }
+        agent?.Dispose();
+        agent = null;
     }
 
     private async Task PairPhoneAsync()

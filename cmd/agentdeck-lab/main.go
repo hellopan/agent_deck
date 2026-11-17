@@ -46,7 +46,7 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
-	const usage = "usage: agentdeck-lab {init|relay|enroll|agent|pair-invite|pair-confirm|pair-revoke|probe|projects|queue|submit|task-receipt|approvals|approve|inbox|cancel-task|remote-cancel|task-log|service|codex-check|detect} [options]"
+	const usage = "usage: agentdeck-lab {init|relay|enroll|agent|pair-invite|pair-confirm|pair-revoke|probe|projects|queue|submit|task-receipt|approvals|approve|inbox|cancel-task|remote-cancel|task-log|service|service-install|service-uninstall|codex-check|detect} [options]"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
@@ -196,22 +196,73 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		return json.NewEncoder(os.Stdout).Encode(agentfind.DetectAll(*hint))
-	case "service":
+	case "service-install", "service-uninstall":
 		name := options.String("name", "AgentDeckLab", "Windows service name registered with SCM")
-		path := options.String("config", "", "absolute endpoint configuration path")
+		executable := options.String("exe", "", "absolute path to the Agent binary (default: this executable)")
+		config := options.String("config", "", "absolute endpoint configuration path")
+		pairing := options.String("pairing-dir", "", "absolute private pairing directory")
 		logPath := options.String("log", "", "absolute local service log path")
 		logDir := options.String("task-logs", "", "absolute local task log directory")
 		inbox := options.String("task-inbox", "", "absolute local task inbox directory")
-		device := options.String("device", "", "lab device a or b")
+		device := options.String("device", "", "registered device ID")
 		codex := addCodexOptions(options)
 		if err := parseFlags(options, args[1:]); err != nil {
 			return err
 		}
-		if *name == "" || !filepath.IsAbs(*path) || !filepath.IsAbs(*logPath) || (*device != "a" && *device != "b") {
-			return errors.New("service requires a name, absolute config and log paths, and device a or b")
+		if mode == "service-uninstall" {
+			return uninstallService(*name)
+		}
+		if !filepath.IsAbs(*config) || !filepath.IsAbs(*pairing) || !filepath.IsAbs(*logPath) || !validDevice(*device) {
+			return errors.New("service install requires absolute config, pairing and log paths, and a valid device ID")
+		}
+		binary := *executable
+		if binary == "" {
+			resolved, err := os.Executable()
+			if err != nil {
+				return err
+			}
+			binary = resolved
+		}
+		// The installed command is the same one the tray would run. Paths stay
+		// where they are; the service account is a system account and can read
+		// them, so moving the identity would only break pairing.
+		serviceArgs := []string{"service", "-name", *name, "-config", *config, "-device", *device,
+			"-pairing-dir", *pairing, "-log", *logPath}
+		if *logDir != "" {
+			serviceArgs = append(serviceArgs, "-task-logs", *logDir)
+		}
+		if *inbox != "" {
+			serviceArgs = append(serviceArgs, "-task-inbox", *inbox)
+		}
+		if codex.policy != "" {
+			serviceArgs = append(serviceArgs, "-projects", codex.policy)
+		}
+		if codex.executable != "" {
+			serviceArgs = append(serviceArgs, "-codex", codex.executable)
+		}
+		if codex.home != "" {
+			serviceArgs = append(serviceArgs, "-codex-home", codex.home)
+		}
+		return installService(*name, binary, serviceArgs)
+	case "service":
+		name := options.String("name", "AgentDeckLab", "Windows service name registered with SCM")
+		path := options.String("config", "", "absolute endpoint configuration path")
+		pairing := options.String("pairing-dir", "", "absolute private pairing directory")
+		logPath := options.String("log", "", "absolute local service log path")
+		logDir := options.String("task-logs", "", "absolute local task log directory")
+		inbox := options.String("task-inbox", "", "absolute local task inbox directory")
+		device := options.String("device", "", "registered device ID")
+		codex := addCodexOptions(options)
+		if err := parseFlags(options, args[1:]); err != nil {
+			return err
+		}
+		// The enrolled device ID is 32 hex characters; a and b are the lab
+		// shorthand. Anything else would be refused by the relay anyway.
+		if *name == "" || !filepath.IsAbs(*path) || !filepath.IsAbs(*logPath) || !validDevice(*device) {
+			return errors.New("service requires a name, absolute config and log paths, and a valid device ID")
 		}
 		return launchService(ctx, *name, func(serviceCtx context.Context) error {
-			return runServiceAgent(serviceCtx, *path, *logPath, *device, *codex, *logDir, *inbox)
+			return runServiceAgent(serviceCtx, *path, *logPath, *device, *pairing, *codex, *logDir, *inbox)
 		})
 	default:
 		return errors.New(usage)
@@ -305,7 +356,7 @@ func readPromptFile(taskPath string, maxBytes int64) ([]byte, error) {
 	return io.ReadAll(io.LimitReader(file, maxBytes+1))
 }
 
-func runServiceAgent(ctx context.Context, configPath, logPath, device string, codex codexOptions, logDir, inbox string) error {
+func runServiceAgent(ctx context.Context, configPath, logPath, device, pairing string, codex codexOptions, logDir, inbox string) error {
 	file, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return fmt.Errorf("open service log: %w", err)
@@ -322,7 +373,11 @@ func runServiceAgent(ctx context.Context, configPath, logPath, device string, co
 			}
 		})
 	}
-	err = runPeer(ctx, "agent", configPath, device, logger, peerOptions{policy: codex.policy, logDir: logDir, inbox: inbox, codex: codex})
+	// The pairing directory is what authorizes a phone. A service started
+	// without it accepts no client certificate at all, so installing one means
+	// passing the same folder the tray uses.
+	err = runPeer(ctx, "agent", configPath, device, logger,
+		peerOptions{policy: codex.policy, logDir: logDir, inbox: inbox, pairing: pairing, codex: codex})
 	cancel()
 	checks.Wait()
 	if err != nil {

@@ -126,7 +126,9 @@ func TestServiceAgentReportsCodexAndTransport(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- runServiceAgent(ctx, filepath.Join(configDir, "agent-a.json"), logPath, "a", codex, taskLogs, inbox)
+		// Empty pairing folder: this fixture uses the legacy peer certificate,
+		// which is what the lab "a"/"b" devices authenticate with.
+		done <- runServiceAgent(ctx, filepath.Join(configDir, "agent-a.json"), logPath, "a", "", codex, taskLogs, inbox)
 	}()
 	t.Cleanup(func() {
 		cancel()

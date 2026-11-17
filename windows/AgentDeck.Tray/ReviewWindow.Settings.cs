@@ -1,5 +1,5 @@
+using System.Diagnostics;
 using System.Text.Json;
-using Microsoft.Win32;
 
 namespace AgentDeck.Tray;
 
@@ -17,6 +17,8 @@ internal sealed partial class ReviewWindow
     private readonly DeckTheme.StatusDot serviceDot = DeckTheme.Dot(DeckTheme.Dim);
     private readonly Label serviceTitle = DeckTheme.Label("开机自动运行 · 未安装", DeckTheme.Body, DeckTheme.Muted);
     private readonly Label serviceDetail = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
+    private readonly Label serviceMode = DeckTheme.Label("托盘进程", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly Button serviceAction = DeckTheme.Button("安装服务");
     private readonly DeckTheme.StatusDot codexDot = DeckTheme.Dot(DeckTheme.Dim);
     private readonly DeckTheme.StatusDot cursorDot = DeckTheme.Dot(DeckTheme.Dim);
     private readonly DeckTheme.StatusDot buddyDot = DeckTheme.Dot(DeckTheme.Dim);
@@ -147,7 +149,9 @@ internal sealed partial class ReviewWindow
 
     private Control ServiceCard()
     {
-        var card = Card("常驻与自启", out var body);
+        serviceAction.Margin = Padding.Empty;
+        serviceAction.Click += async (_, _) => await RunActionAsync(ToggleServiceAsync);
+        var card = Card("常驻与自启", out var body, action: serviceAction);
         DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 6);
         var head = new TableLayoutPanel
         {
@@ -185,9 +189,8 @@ internal sealed partial class ReviewWindow
         facts.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
         facts.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
         facts.Controls.Add(DeckTheme.Label("当前方式", DeckTheme.Small, DeckTheme.Dim), 0, 0);
-        var mode = DeckTheme.Label("托盘进程", DeckTheme.MonoSmall, DeckTheme.Muted);
-        mode.TextAlign = ContentAlignment.MiddleRight;
-        facts.Controls.Add(mode, 1, 0);
+        serviceMode.TextAlign = ContentAlignment.MiddleRight;
+        facts.Controls.Add(serviceMode, 1, 0);
         facts.Controls.Add(DeckTheme.Label("服务名", DeckTheme.Small, DeckTheme.Dim), 0, 1);
         var serviceName = DeckTheme.Label("AgentDeckLab", DeckTheme.MonoSmall, DeckTheme.Muted);
         serviceName.TextAlign = ContentAlignment.MiddleRight;
@@ -307,12 +310,91 @@ internal sealed partial class ReviewWindow
     {
         if (logs.TextLength == 0) logs.Text = LogsPath;
         RefreshProjects();
-        var service = ServiceStatus();
-        serviceDot.Color = service is null ? DeckTheme.Dim : DeckTheme.Good;
-        serviceTitle.Text = service is null ? "开机自动运行 · 未安装" : "开机自动运行 · 已安装";
-        serviceTitle.ForeColor = service is null ? DeckTheme.Muted : DeckTheme.Ink;
-        serviceDetail.Text = service ?? "以托盘方式运行，登录后启动";
+        var service = ServiceControl.Query();
+        serviceDot.Color = service.Running ? DeckTheme.Good : service.Installed ? DeckTheme.Warning : DeckTheme.Dim;
+        serviceTitle.Text = service.Running ? "开机自动运行 · 服务运行中"
+            : service.Installed ? "开机自动运行 · 已安装，未运行" : "开机自动运行 · 未安装";
+        serviceTitle.ForeColor = service.Installed ? DeckTheme.Ink : DeckTheme.Muted;
+        serviceDetail.Text = service.Running ? "由 Windows 服务托管 · 登录前即可连接"
+            : service.Installed ? "服务已注册但没有运行，重启服务或重新安装" : "以托盘方式运行，登录后启动";
+        serviceMode.Text = service.Installed ? "Windows 服务" : "托盘进程";
+        serviceAction.Text = service.Installed ? "卸载服务" : "安装服务";
+        serviceAction.Enabled = service.Installed || DeviceRegistered;
         if (codexLine.Text == "尚未检测") _ = DetectToolsAsync(fill: true);
+    }
+
+    // Installing a service needs an elevated process, so the tray only builds
+    // the command and lets Windows raise the prompt. Every path the service
+    // needs is passed explicitly: it has to start with the identity, pairing
+    // folder and project policy the tray already has, not with defaults.
+    private async Task ToggleServiceAsync()
+    {
+        if (ServiceControl.Query().Installed)
+        {
+            var confirm = MessageBox.Show(this,
+                "卸载后开机不再自动运行 Agent，需要登录 Windows 后由托盘启动。\n\n确认卸载？",
+                "卸载开机自启服务", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning,
+                MessageBoxDefaultButton.Button2);
+            if (confirm != DialogResult.OK) return;
+            var code = await RunElevatedAsync("service-uninstall", "-name", ServiceControl.Name);
+            if (ServiceControl.Query().Installed)
+                throw new InvalidOperationException($"服务没有卸载成功（退出码 {code}）。");
+            StopAgent();
+            RecordEvent("已卸载开机自启服务");
+            if (DeviceIdText() is { Length: > 0 } id) StartAgent(id);
+            SetStatus("服务已卸载，Agent 改由托盘启动。");
+            RefreshStatePage();
+            return;
+        }
+        var device = DeviceIdText();
+        if (device.Length == 0) throw new InvalidOperationException("请先配置云服务器，再安装开机自启服务。");
+        var proceed = MessageBox.Show(this,
+            "安装需要管理员权限，Windows 会弹出确认框。\n\n安装后 Agent 由服务启动，未登录也能连接手机。",
+            "安装开机自启服务", MessageBoxButtons.OKCancel, MessageBoxIcon.Information);
+        if (proceed != DialogResult.OK) return;
+        var arguments = new List<string>
+        {
+            "service-install", "-name", ServiceControl.Name, "-exe", ExecutablePath,
+            "-config", AgentConfig, "-pairing-dir", PairingDirectory, "-device", device,
+            "-log", Path.Combine(DeviceDirectory, "service.log"),
+            "-task-logs", LogsPath, "-task-inbox", InboxPath, "-projects", ProjectsPath
+        };
+        if (codexPath.Trim().Length > 0) arguments.AddRange(["-codex", RequirePath(codexPath, "Codex 可执行文件")]);
+        var exit = await RunElevatedAsync([.. arguments]);
+        if (!ServiceControl.Query().Installed)
+            throw new InvalidOperationException($"服务没有安装成功（退出码 {exit}）。如果 Windows 提示被取消，请重试。");
+        // The service owns the relay connection now. A second agent on the same
+        // device identity would take turns answering the phone.
+        StopAgent();
+        RecordEvent("已安装开机自启服务");
+        SetStatus("服务已安装并启动，登录前也能连接。");
+        RefreshStatePage();
+    }
+
+    // runas needs UseShellExecute, which means no output pipes, so the result is
+    // the exit code plus a fresh look at the service manager.
+    private async Task<int> RunElevatedAsync(params string[] args)
+    {
+        var start = new ProcessStartInfo(ExecutablePath)
+        {
+            UseShellExecute = true, Verb = "runas", CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+        foreach (var argument in args) start.ArgumentList.Add(argument);
+        Process process;
+        try
+        {
+            process = Process.Start(start) ?? throw new InvalidOperationException("无法启动安装命令。");
+        }
+        catch (System.ComponentModel.Win32Exception error) when (error.NativeErrorCode == 1223)
+        {
+            throw new InvalidOperationException("已取消管理员授权，服务没有改动。", error);
+        }
+        using (process)
+        {
+            await process.WaitForExitAsync(lifetime.Token);
+            return process.ExitCode;
+        }
     }
 
     private void SetProjectRows(List<(string Directory, string Id, bool Enabled, string Mode)> rows)
@@ -391,20 +473,6 @@ internal sealed partial class ReviewWindow
         var parts = path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar,
             StringSplitOptions.RemoveEmptyEntries);
         return parts.Length <= 3 ? path : "…\\" + string.Join('\\', parts[^3..]);
-    }
-
-    private static string? ServiceStatus()
-    {
-        try
-        {
-            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\AgentDeckLab");
-            if (key is null) return null;
-            return key.GetValue("Start") is int start && start == 2 ? "已注册为服务 · 开机自启" : "已注册为服务 · 手动启动";
-        }
-        catch (Exception error) when (error is System.Security.SecurityException or UnauthorizedAccessException)
-        {
-            return null;
-        }
     }
 
     /// <summary>
