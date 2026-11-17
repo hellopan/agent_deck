@@ -108,6 +108,7 @@ func run(ctx context.Context, args []string) error {
 		path := options.String("config", "", "local Agent configuration destination")
 		endpoint := options.String("relay-url", "", "Relay WSS origin")
 		fingerprint := options.String("fingerprint", "", "Relay certificate SHA-256")
+		replace := options.Bool("replace", false, "re-pin an enrolled device to a new Relay address or certificate")
 		if err := parseFlags(options, args[1:]); err != nil {
 			return err
 		}
@@ -118,7 +119,7 @@ func run(ctx context.Context, args []string) error {
 		// Accept what the operator pasted: hex from an SSH session often carries
 		// stray whitespace or upper case, and both are the same SHA-256 value.
 		id, err := enrollAgent(ctx, *path, strings.TrimSpace(*endpoint),
-			strings.ToLower(strings.TrimSpace(token)), strings.ToLower(strings.TrimSpace(*fingerprint)))
+			strings.ToLower(strings.TrimSpace(token)), strings.ToLower(strings.TrimSpace(*fingerprint)), *replace)
 		if err == nil {
 			_, err = fmt.Fprintln(os.Stdout, id)
 		}

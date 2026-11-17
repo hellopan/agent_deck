@@ -3,8 +3,10 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"encoding/pem"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -80,17 +82,17 @@ func TestEnrollWithoutLegacyFiles(t *testing.T) {
 
 	agent := filepath.Join(t.TempDir(), "agent.local.json")
 	fingerprint := strings.TrimSpace(pin.String())
-	if _, err := enrollAgent(t.Context(), agent, endpoint, token, strings.Repeat("0", 64)); err == nil {
+	if _, err := enrollAgent(t.Context(), agent, endpoint, token, strings.Repeat("0", 64), false); err == nil {
 		t.Fatal("accepted incorrect Relay fingerprint")
 	}
-	if _, err := enrollAgent(t.Context(), agent, endpoint, strings.Repeat("0", 64), fingerprint); err == nil {
+	if _, err := enrollAgent(t.Context(), agent, endpoint, strings.Repeat("0", 64), fingerprint, false); err == nil {
 		t.Fatal("accepted incorrect enrollment token")
 	}
-	first, err := enrollAgent(t.Context(), agent, endpoint, token, fingerprint)
+	first, err := enrollAgent(t.Context(), agent, endpoint, token, fingerprint, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := enrollAgent(t.Context(), agent, endpoint, token, fingerprint)
+	second, err := enrollAgent(t.Context(), agent, endpoint, token, fingerprint, false)
 	if err != nil || first != second {
 		t.Fatalf("retry changed identity: %q %q %v", first, second, err)
 	}
@@ -104,5 +106,85 @@ func TestEnrollWithoutLegacyFiles(t *testing.T) {
 	}
 	if !strings.Contains(qr.String(), first) || strings.Contains(qr.String(), "PRIVATE KEY") {
 		t.Fatal("pairing QR missing device or exposing private key")
+	}
+}
+
+func TestEnrollRepinsOnlyWhenAsked(t *testing.T) {
+	server := httptest.NewUnstartedServer(nil)
+	defer server.Close()
+	endpoint := "wss://" + server.Listener.Addr().String()
+	relayPath := filepath.Join(t.TempDir(), "relay.local.json")
+	var pin strings.Builder
+	if err := initEnrollmentRelay(relayPath, endpoint, labValidity, &pin); err != nil {
+		t.Fatal(err)
+	}
+	var relay relayConfig
+	if err := loadConfig(relayPath, &relay); err != nil {
+		t.Fatal(err)
+	}
+	cert, err := relay.Identity.keyPair()
+	if err != nil {
+		t.Fatal(err)
+	}
+	routes := t.TempDir()
+	publish, err := enrollmentStorage(routes, relay.Routes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token := inviteToken(t)
+	server.Config.Handler = transport.NewEnrollmentRelay(t.Context(), relay.Routes, token, publish)
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13}
+	server.StartTLS()
+	fingerprint := strings.TrimSpace(pin.String())
+
+	agent := filepath.Join(t.TempDir(), "agent.local.json")
+	first, err := enrollAgent(t.Context(), agent, endpoint, token, fingerprint, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stand in for a Relay that was re-signed: same address, other certificate,
+	// so the device's stored pin no longer describes what the server presents.
+	var stored peerConfig
+	if err := loadConfig(agent, &stored); err != nil {
+		t.Fatal(err)
+	}
+	foreign, err := issueIdentity("other.agentdeck.test", x509.ExtKeyUsageServerAuth, deviceValidity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored.RelayCertificate = foreign.Certificate
+	encoded, err := json.Marshal(stored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agent, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := enrollAgent(t.Context(), agent, endpoint, token, fingerprint, false); err == nil ||
+		!strings.Contains(err.Error(), "pinned to another Relay certificate") {
+		t.Fatalf("re-pin happened without consent: %v", err)
+	}
+	second, err := enrollAgent(t.Context(), agent, endpoint, token, fingerprint, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != second {
+		t.Fatalf("re-pin changed the device id: %q then %q", first, second)
+	}
+	var repinned peerConfig
+	if err := loadConfig(agent, &repinned); err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode([]byte(repinned.RelayCertificate))
+	if block == nil {
+		t.Fatal("re-pin left no certificate")
+	}
+	pinned, err := x509.ParseCertificate(block.Bytes)
+	if err != nil || pairingFingerprint(pinned) != fingerprint {
+		t.Fatalf("stored pin was not replaced: %v", err)
+	}
+	if repinned.RelayURL != endpoint {
+		t.Fatalf("relay address is %q, want %q", repinned.RelayURL, endpoint)
 	}
 }

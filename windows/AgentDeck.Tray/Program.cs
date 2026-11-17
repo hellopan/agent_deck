@@ -154,6 +154,14 @@ internal sealed partial class ReviewWindow : Form
         flashTimer.Start();
     }
 
+    private const string RepinQuestion =
+        "本机钉着的是旧证书，和这次填的对不上。\n\n" +
+        "继续会把本机改钉到新证书，并用同一个设备 ID 重新注册：\n" +
+        "· 项目白名单、路径与日志都保留\n" +
+        "· 已配对的手机会连不上，需要在手机上重新扫码\n" +
+        "· 旧的配对信任会改名留底，不删除\n\n" +
+        "继续？";
+
     private async Task ConfigureRelayAsync()
     {
         using var dialog = new RelayWindow();
@@ -165,24 +173,122 @@ internal sealed partial class ReviewWindow : Form
         SetStatus("正在向 Relay 注册电脑…");
         Directory.CreateDirectory(DeviceDirectory);
         string id;
+        var repinned = false;
         try
         {
-            id = (await RunWithInputAsync(dialog.Token, "enroll", "-config", AgentConfig,
-                "-relay-url", dialog.Endpoint, "-fingerprint", dialog.Fingerprint)).Trim();
+            id = await EnrollAsync(dialog, replace: false);
         }
-        catch (Exception error)
+        catch (Exception error) when (PinnedToOldRelay(error.Message))
         {
             // The status line flashes and fades. Enrollment failures need a fix
             // on the server, so keep the reason where past events stay readable.
+            RecordEvent(ExplainEnrollmentFailure(error.Message));
+            RefreshEvents();
+            if (MessageBox.Show(this, RepinQuestion, "服务器证书已更换",
+                    MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes)
+            {
+                SetStatus("已取消，本机身份没有改动。");
+                return;
+            }
+            id = await RepinAsync(dialog);
+            repinned = true;
+        }
+        catch (Exception error)
+        {
             RecordEvent(ExplainEnrollmentFailure(error.Message));
             RefreshEvents();
             throw;
         }
         File.WriteAllText(Path.Combine(DeviceDirectory, "registered-device"), id);
         StartAgent(id);
-        RecordEvent("电脑已注册到 Relay");
-        SetStatus("电脑已注册，正在连接 Relay。");
+        if (!repinned)
+        {
+            RecordEvent("电脑已注册到 Relay");
+            SetStatus("电脑已注册，正在连接 Relay。");
+        }
+        else if (ServiceControl.Query().Installed)
+        {
+            // The service read the old pin at start-up and only reloads the
+            // configuration when it restarts, which needs elevation.
+            RecordEvent("已改钉新证书。服务仍用旧证书，重启电脑后生效");
+            SetStatus("已改钉新证书。重启电脑后服务才会用新证书。");
+        }
+        else
+        {
+            RecordEvent("已改钉新证书并重新注册");
+            SetStatus("已改钉新证书。请在手机上重新扫码配对。");
+        }
         UpdateConnection();
+    }
+
+    private async Task<string> EnrollAsync(RelayWindow dialog, bool replace)
+    {
+        var arguments = new List<string>
+        {
+            "enroll", "-config", AgentConfig,
+            "-relay-url", dialog.Endpoint, "-fingerprint", dialog.Fingerprint
+        };
+        if (replace) arguments.Add("-replace");
+        return (await RunWithInputAsync(dialog.Token, [.. arguments])).Trim();
+    }
+
+    /// <summary>
+    /// Moves the phone trust aside, re-enrolls against the new certificate and
+    /// puts the trust back if the Relay refuses the new pin. The device keeps
+    /// its id and route tokens, so the auto-start service keeps working; only
+    /// the phones have to scan again, because their stored copy of the Relay
+    /// certificate is the one that changed.
+    /// </summary>
+    private async Task<string> RepinAsync(RelayWindow dialog)
+    {
+        var trust = MoveTrustAside();
+        try
+        {
+            SetStatus("正在核对新证书并重新注册…");
+            var id = await EnrollAsync(dialog, replace: true);
+            // The running Agent loaded the old pin at start-up, so it has to be
+            // replaced after the configuration on disk changed.
+            StopAgent();
+            return id;
+        }
+        catch (Exception error)
+        {
+            RestoreTrust(trust);
+            RecordEvent(ExplainEnrollmentFailure(error.Message));
+            RefreshEvents();
+            throw;
+        }
+    }
+
+    private static bool PinnedToOldRelay(string message) =>
+        message.Contains("pinned to another Relay certificate", StringComparison.Ordinal) ||
+        message.Contains("belongs to another Relay", StringComparison.Ordinal);
+
+    private static string? MoveTrustAside()
+    {
+        if (!Directory.Exists(PairingDirectory)) return null;
+        var target = UniquePath(PairingDirectory);
+        Directory.Move(PairingDirectory, target);
+        return target;
+    }
+
+    private static void RestoreTrust(string? backup)
+    {
+        if (backup is null || !Directory.Exists(backup) || Directory.Exists(PairingDirectory)) return;
+        Directory.Move(backup, PairingDirectory);
+    }
+
+    /// <summary>
+    /// Keeps every attempt recoverable: a failed re-pin must not eat the
+    /// configuration or the trust that was still valid a minute ago.
+    /// </summary>
+    private static string UniquePath(string path)
+    {
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var candidate = $"{path}.{stamp}.bak";
+        for (var n = 2; File.Exists(candidate) || Directory.Exists(candidate); n++)
+            candidate = $"{path}.{stamp}-{n}.bak";
+        return candidate;
     }
 
     private static string ExplainEnrollmentFailure(string message)
@@ -198,9 +304,9 @@ internal sealed partial class ReviewWindow : Form
         if (message.Contains("not valid until", StringComparison.Ordinal))
             return "注册失败：服务器时钟超前，证书尚未生效";
         if (message.Contains("pinned to another Relay certificate", StringComparison.Ordinal))
-            return "注册失败：本机还钉着旧证书，先重置本机身份";
+            return "注册失败：本机钉的是旧证书，需要改钉新证书";
         if (message.Contains("belongs to another Relay", StringComparison.Ordinal))
-            return "注册失败：本机配置指向另一个 Relay，先重置本机身份";
+            return "注册失败：本机配置指向另一个 Relay，需要改钉新证书";
         if (message.Contains("HTTP 401", StringComparison.Ordinal))
             return "注册失败：注册令牌不对";
         if (message.Contains("HTTP 409", StringComparison.Ordinal))

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
@@ -20,6 +21,30 @@ import (
 
 	"github.com/hellopan/agent_deck/internal/transport"
 )
+
+// replaceFile writes data at name, replacing an earlier version atomically.
+// publishSubmission refuses to overwrite a previous record by design; a re-pin
+// is the case where the owner explicitly asked for the stored copy to change.
+func replaceFile(root *os.Root, name string, data []byte) error {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	staging := "cfg-" + hex.EncodeToString(nonce[:]) + ".local.json"
+	file, err := root.OpenFile(staging, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(staging)
+	_, writeErr := file.Write(data)
+	if writeErr == nil {
+		writeErr = file.Sync()
+	}
+	if err := errors.Join(writeErr, file.Close()); err != nil {
+		return err
+	}
+	return root.Rename(staging, name)
+}
 
 func initEnrollmentRelay(path, endpoint string, validity time.Duration, output io.Writer) error {
 	address, err := relayAddress(endpoint)
@@ -112,7 +137,11 @@ func enrollmentStorage(directory string, routes map[string]transport.Route) (fun
 	}, nil
 }
 
-func enrollAgent(ctx context.Context, path, rawURL, token, fingerprint string) (string, error) {
+// replace lets the owner move an enrolled device to another Relay address or
+// another Relay certificate. Keeping the device identity matters: the service
+// command line and the phone's device list both name this device, so minting a
+// new one would mean reinstalling the service and re-pairing every phone.
+func enrollAgent(ctx context.Context, path, rawURL, token, fingerprint string, replace bool) (string, error) {
 	if !filepath.IsAbs(path) || !validPairingFingerprint(token) || !validPairingFingerprint(fingerprint) {
 		return "", errors.New("expected an absolute config path, enrollment token and Relay certificate SHA-256")
 	}
@@ -124,6 +153,9 @@ func enrollAgent(ctx context.Context, path, rawURL, token, fingerprint string) (
 	var config peerConfig
 	err = loadConfig(path, &config)
 	newDevice := errors.Is(err, os.ErrNotExist)
+	// A re-pin rewrites the stored certificate, so the save below has to run for
+	// it just like it does for a brand new device.
+	repinned := false
 	if newDevice {
 		device, err := routeToken()
 		if err != nil {
@@ -146,16 +178,32 @@ func enrollAgent(ctx context.Context, path, rawURL, token, fingerprint string) (
 			Devices: map[string]deviceConfig{device: {Token: agent}}}
 	} else if err != nil {
 		return "", err
-	} else if config.RelayURL != relayURL {
-		return "", errors.New("existing device belongs to another Relay")
 	} else {
-		block, _ := pem.Decode([]byte(config.RelayCertificate))
-		if block == nil {
-			return "", errors.New("stored Relay certificate is invalid")
+		if config.RelayURL != relayURL {
+			if !replace {
+				return "", errors.New("existing device belongs to another Relay")
+			}
+			config.RelayURL = relayURL
+			repinned = true
 		}
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil || pairingFingerprint(cert) != fingerprint {
-			return "", errors.New("existing device is pinned to another Relay certificate")
+		block, _ := pem.Decode([]byte(config.RelayCertificate))
+		switch {
+		case block == nil:
+			// A truncated or hand-edited file is recoverable only by re-pinning;
+			// without -replace the owner needs to know it is broken.
+			if !replace {
+				return "", errors.New("stored Relay certificate is invalid")
+			}
+			repinned = true
+		default:
+			cert, parseErr := x509.ParseCertificate(block.Bytes)
+			if parseErr == nil && pairingFingerprint(cert) == fingerprint {
+				break
+			}
+			if !replace {
+				return "", errors.New("existing device is pinned to another Relay certificate")
+			}
+			repinned = true
 		}
 	}
 	if len(config.Devices) != 1 || !validPairingFingerprint(config.PhoneRouteToken) {
@@ -201,7 +249,7 @@ func enrollAgent(ctx context.Context, path, rawURL, token, fingerprint string) (
 					return fmt.Errorf("relay certificate expired at %s, re-run relay-init on the server",
 						cert.NotAfter.UTC().Format(time.RFC3339))
 				}
-				if newDevice {
+				if newDevice || repinned {
 					config.RelayCertificate = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}))
 					encoded, err := json.Marshal(config)
 					if err != nil {
@@ -212,10 +260,11 @@ func enrollAgent(ctx context.Context, path, rawURL, token, fingerprint string) (
 						return err
 					}
 					defer root.Close()
-					if err := publishSubmission(root, filepath.Base(path), encoded); err != nil {
+					if err := replaceFile(root, filepath.Base(path), encoded); err != nil {
 						return err
 					}
 					newDevice = false
+					repinned = false
 				}
 				return nil
 			},

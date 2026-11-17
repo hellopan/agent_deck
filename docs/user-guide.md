@@ -202,7 +202,7 @@ systemctl status agentdeck-relay --no-pager
 | 注册报 `fingerprint mismatch: server sent …, configured …` | 填的指纹不是这台 Relay 现在用的那份 | 用报错里 `server sent` 那串；重新生成过 Relay 就一定换了指纹 |
 | 注册报 `names …, which does not cover "…"` | 填的地址和证书里的名字不是同一个 | 改成报错里 `names` 后面的那个名字，或在云机按新地址重新 `relay-init` |
 | 注册报 `expired at …` | 证书到期了 | 云机 `relay-init -validity 365` 重签，然后电脑和手机全部重配 |
-| 注册报 `existing device …`（`pinned` / `another Relay`） | 本机还留着旧身份 | 退出托盘，删 `%LOCALAPPDATA%\AgentDeck` 下 `agent.local.json`、`registered-device`、`pairing\`，再重新配置 |
+| 注册报 `existing device …`（`pinned` / `another Relay`） | 服务器换了证书或地址，本机还钉着旧的 | 点「确定」后按提示确认一次即可改钉（设备 ID 不变）；拒绝后想再来，重新点「配置云服务器」填三项 |
 | 手机连不上，电脑显示已就绪 | 手机填的地址和电脑不同，或手机没网 | 手机连接页看延迟；确认手机能打开 `https://云机地址:8443` |
 | 配对扫完没反应 | 超过两分钟，或已有别的配对请求 | 重新点「显示配对二维码」，一次只配一台 |
 | 手机看不到项目 | 项目未启用 | 设置页把「启用」打开，手机下拉刷新 |
@@ -268,15 +268,13 @@ sudo systemctl start agentdeck-relay
 
 > `routes/` 是旧设备的注册记录，换身份后既用不上，又会继续占 256 台的上限。
 
-电脑：退出托盘（右键图标 → 退出），删掉这三样，再打开程序重填三项：
+电脑：**不用再手删文件**。打开程序 →「配置云服务器」→ 填新的地址与指纹 → 确定。程序会提示「服务器证书已更换」，确认后自动完成三件事：改钉新证书、保留设备 ID 重新注册、把旧的配对信任改名留底（`pairing.<时间>.bak`）。若点「否」，本机一个文件都不会动，可以重新来过。
 
-```text
-%LOCALAPPDATA%\AgentDeck\agent.local.json      ← 设备身份 + 旧 Relay 证书
-%LOCALAPPDATA%\AgentDeck\registered-device     ← 已注册标记
-%LOCALAPPDATA%\AgentDeck\pairing\              ← 已配对手机的信任
-```
+> 设备 ID 不变，所以已装的开机自启服务不用重装；手机因为钉的是旧证书，仍要重新扫码。
 
 手机：旧配对随旧证书一起失效，重新扫码配对。注册令牌不用换，它在 `enrollment-token` 里，和证书无关。
+
+命令行用户可以把 `-replace` 传给 `enroll`，效果相同：`enroll -config … -relay-url … -fingerprint … -replace`。
 
 ## 11. 出问题时给开发者什么
 
