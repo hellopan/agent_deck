@@ -80,7 +80,7 @@ func TestServiceAgentReportsCodexAndTransport(t *testing.T) {
 	configDir := filepath.Join(directory, "config")
 	server := httptest.NewUnstartedServer(nil)
 	defer server.Close()
-	if err := createLab(configDir, "wss://"+server.Listener.Addr().String()); err != nil {
+	if err := createLab(configDir, "wss://"+server.Listener.Addr().String(), labValidity); err != nil {
 		t.Fatal(err)
 	}
 	var config relayConfig

@@ -1,6 +1,6 @@
 # AgentDeck 使用说明
 
-适用版本：电脑端与手机端 `0.2.0-lab`。这份说明从零写到能用：起服务器、装电脑、配项目、配对手机、跑第一个任务、设开机自启、撤销配对。
+适用版本：电脑端与手机端 `0.2.0-lab`。这份说明从零写到能用：起服务器、装电脑、配项目、配对手机、跑第一个任务、设开机自启、撤销配对、重签证书。
 
 手机不直连电脑。两端都主动连你自己的一台云服务器（Relay），由它转发加密流量，所以电脑不需要公网 IP，也不用在路由器上开端口。
 
@@ -34,10 +34,17 @@ cd "$HOME/agentdeck-enroll"
 # 上传 agentdeck-relay-linux-amd64 到本目录后执行
 chmod 700 ./agentdeck-relay-linux-amd64
 ./agentdeck-relay-linux-amd64 relay-init -config ./relay.local.json \
-  -relay-url 'wss://你的云机地址:8443'
+  -relay-url 'wss://你的云机地址:8443' -validity 365
 ```
 
-`relay-init` 只跑一次，会打印证书指纹。生成注册令牌并启动：
+`-validity` 是证书有效天数，可填 1–3650，不写默认 7 天。自用建议直接给一年。`relay-init` 只跑一次，会打印证书指纹，同时把到期时间打到 stderr：
+
+```text
+certificate valid until 2027-11-17T16:42:14Z (365 days)
+49d7cb9878ee25efba0131b17281c75409c7f86529babed93f8de5d0fbe13f99
+```
+
+第一行只是给人看的，第二行才是要填进电脑端的指纹——用 `> fingerprint.txt` 之类重定向时只有指纹进文件。生成注册令牌并启动：
 
 ```sh
 umask 077
@@ -89,7 +96,7 @@ sudo systemctl enable --now agentdeck-relay
 systemctl status agentdeck-relay --no-pager
 ```
 
-> 当前实验证书有效期七天。到期后手机和电脑都会连不上，需要重新 `relay-init` 并重填三项。
+> `relay-init` 默认只签七天。要长期用必须显式带 `-validity 365`（或更长的天数）。签发后想确认还剩多久，`relay-fingerprint` 会把到期时间打到 stderr。
 
 ## 2. 装电脑端
 
@@ -194,7 +201,7 @@ systemctl status agentdeck-relay --no-pager
 | 状态页一直「未注册」 | 地址 / 指纹 / 令牌填错，或 8443 不通 | 先在云机 `curl -k https://127.0.0.1:8443` 看端口；再核对安全组和防火墙；指纹必须与 `relay-fingerprint` 完全一致 |
 | 注册报 `fingerprint mismatch: server sent …, configured …` | 填的指纹不是这台 Relay 现在用的那份 | 用报错里 `server sent` 那串；重新生成过 Relay 就一定换了指纹 |
 | 注册报 `names …, which does not cover "…"` | 填的地址和证书里的名字不是同一个 | 改成报错里 `names` 后面的那个名字，或在云机按新地址重新 `relay-init` |
-| 注册报 `expired at …` | 七天有效期到了 | 云机重新 `relay-init`，然后电脑和手机全部重配 |
+| 注册报 `expired at …` | 证书到期了 | 云机 `relay-init -validity 365` 重签，然后电脑和手机全部重配 |
 | 注册报 `existing device …`（`pinned` / `another Relay`） | 本机还留着旧身份 | 退出托盘，删 `%LOCALAPPDATA%\AgentDeck` 下 `agent.local.json`、`registered-device`、`pairing\`，再重新配置 |
 | 手机连不上，电脑显示已就绪 | 手机填的地址和电脑不同，或手机没网 | 手机连接页看延迟；确认手机能打开 `https://云机地址:8443` |
 | 配对扫完没反应 | 超过两分钟，或已有别的配对请求 | 重新点「显示配对二维码」，一次只配一台 |
@@ -202,7 +209,7 @@ systemctl status agentdeck-relay --no-pager
 | 任务里写文件被拒 | 项目是只读 | 「权限」列切成 `可写`，重新提交任务 |
 | 审批点了允许没执行 | 超过 5 分钟或任务已换轮次 | 重新发起；过期审批按拒绝处理，这是设计行为 |
 | 电脑重启后手机连不上 | 没装服务，停在登录界面 | 装开机自启服务（第 6 步） |
-| 七天左右突然全断 | 实验证书过期 | 云机重新 `relay-init`，电脑和手机重填三项 |
+| 某天突然全断 | 证书到期 | 先 `relay-fingerprint` 看 stderr 里的到期日；重签后电脑和手机重填三项 |
 | Codex 显示「未运行」 | 没装或没登录 | 电脑上跑 `codex` 确认可用；设置页点「重新检测」 |
 
 ## 9. 边界：手机能做什么、不能做什么
@@ -216,7 +223,37 @@ systemctl status agentdeck-relay --no-pager
 
 权限清单只存在电脑上，只能由本机用户改。手机发的请求用 `projectId`，由 Agent 解析成真实目录——手机既拿不到路径，也没法伪造。
 
-## 10. 出问题时给开发者什么
+## 10. 重签证书（换地址、延长有效期）
+
+`relay-init` 不会覆盖已有配置，报 `file exists` 就是故意的：换证书等于换一把钥匙，指纹变了，所有已配对的设备都会失效。确实要重签，按这个顺序走。
+
+云机：
+
+```sh
+cd "$HOME/agentdeck-enroll"
+sudo systemctl stop agentdeck-relay
+mv relay.local.json relay.local.json.bak          # 先留退路，别直接删
+mv routes routes.bak && mkdir -p routes && chmod 700 routes
+
+./agentdeck-relay-linux-amd64 relay-init -config ./relay.local.json \
+  -relay-url 'wss://你的云机地址:8443' -validity 365
+
+sudo systemctl start agentdeck-relay
+```
+
+> `routes/` 是旧设备的注册记录，换身份后既用不上，又会继续占 256 台的上限。
+
+电脑：退出托盘（右键图标 → 退出），删掉这三样，再打开程序重填三项：
+
+```text
+%LOCALAPPDATA%\AgentDeck\agent.local.json      ← 设备身份 + 旧 Relay 证书
+%LOCALAPPDATA%\AgentDeck\registered-device     ← 已注册标记
+%LOCALAPPDATA%\AgentDeck\pairing\              ← 已配对手机的信任
+```
+
+手机：旧配对随旧证书一起失效，重新扫码配对。注册令牌不用换，它在 `enrollment-token` 里，和证书无关。
+
+## 11. 出问题时给开发者什么
 
 - 电脑：设置页底部「任务日志」目录里的文件（默认 `%LOCALAPPDATA%\AgentDeck\logs`）。
 - 电脑：状态页「最近连接事件」那四条（只保留最近 4 条）。

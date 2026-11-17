@@ -12,7 +12,7 @@ import (
 func TestPairingRequiresMatchingLocalConfirmation(t *testing.T) {
 	dir := t.TempDir()
 	configs := filepath.Join(dir, "config")
-	if err := createLab(configs, "wss://127.0.0.1:8443"); err != nil {
+	if err := createLab(configs, "wss://127.0.0.1:8443", labValidity); err != nil {
 		t.Fatal(err)
 	}
 	folder := filepath.Join(dir, "pairing")
@@ -43,7 +43,7 @@ func TestPairingRequiresMatchingLocalConfirmation(t *testing.T) {
 	if err := json.Unmarshal(wire.Bytes(), &invite); err != nil {
 		t.Fatal(err)
 	}
-	phone, err := issueIdentity("new-phone", x509.ExtKeyUsageClientAuth)
+	phone, err := issueIdentity("new-phone", x509.ExtKeyUsageClientAuth, labValidity)
 	if err != nil {
 		t.Fatal(err)
 	}

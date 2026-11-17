@@ -20,7 +20,7 @@ export AGENTDECK_ENROLLMENT_TOKEN="$(cat enrollment-token)"
 ./agentdeck-relay-linux-amd64 relay -config ./relay.local.json -enrollment-dir ./routes -listen 0.0.0.0:8443
 ```
 
-`relay-init` 只执行一次。服务器指纹可用 `./agentdeck-relay-linux-amd64 relay-fingerprint -config ./relay.local.json` 重新查看。注册令牌只由电脑管理员从云机本地复制到 Windows 设置窗口。阿里云安全组和系统防火墙需放行实际监听端口。若仍使用原先只绑定云机回环的 Relay，则需为手机和电脑分别配置可达路径。证书目前沿用实验工具的七天有效期，请在有效期内联调。
+`relay-init` 只执行一次。服务器指纹可用 `./agentdeck-relay-linux-amd64 relay-fingerprint -config ./relay.local.json` 重新查看，同时会把证书到期时间打到 stderr。注册令牌只由电脑管理员从云机本地复制到 Windows 设置窗口。阿里云安全组和系统防火墙需放行实际监听端口。若仍使用原先只绑定云机回环的 Relay，则需为手机和电脑分别配置可达路径。`relay-init` 默认签七天证书，长期使用请加 `-validity 365`。
 
 ## 新电脑和手机
 

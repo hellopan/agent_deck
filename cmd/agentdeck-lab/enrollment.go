@@ -21,12 +21,12 @@ import (
 	"github.com/hellopan/agent_deck/internal/transport"
 )
 
-func initEnrollmentRelay(path, endpoint string, output io.Writer) error {
+func initEnrollmentRelay(path, endpoint string, validity time.Duration, output io.Writer) error {
 	address, err := relayAddress(endpoint)
 	if err != nil {
 		return err
 	}
-	cert, err := issueIdentity(address.Hostname(), x509.ExtKeyUsageServerAuth)
+	cert, err := issueIdentity(address.Hostname(), x509.ExtKeyUsageServerAuth, validity)
 	if err != nil {
 		return err
 	}
@@ -46,6 +46,10 @@ func initEnrollmentRelay(path, endpoint string, output io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// Keep the fingerprint alone on stdout so scripts can capture it, and put the
+	// expiry on stderr where the operator still sees it in a terminal.
+	fmt.Fprintf(os.Stderr, "certificate valid until %s (%d days)\n",
+		pair.Leaf.NotAfter.UTC().Format(time.RFC3339), int(validity/(24*time.Hour)))
 	_, err = fmt.Fprintln(output, pairingFingerprint(pair.Leaf))
 	return err
 }
@@ -134,7 +138,7 @@ func enrollAgent(ctx context.Context, path, rawURL, token, fingerprint string) (
 		if err != nil {
 			return "", err
 		}
-		host, err := issueIdentity(device+".agentdeck.test", x509.ExtKeyUsageServerAuth)
+		host, err := issueIdentity(device+".agentdeck.test", x509.ExtKeyUsageServerAuth, deviceValidity)
 		if err != nil {
 			return "", err
 		}

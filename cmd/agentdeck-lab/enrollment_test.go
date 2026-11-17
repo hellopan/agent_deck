@@ -2,13 +2,54 @@ package main
 
 import (
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/pem"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hellopan/agent_deck/internal/transport"
 )
+
+func TestRelayInitHonoursValidity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relay.local.json")
+	var pin strings.Builder
+	if err := initEnrollmentRelay(path, "wss://127.0.0.1:8443", 365*24*time.Hour, &pin); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(strings.TrimSpace(pin.String()), "\n") != 0 {
+		t.Fatalf("stdout must carry only the fingerprint, got %q", pin.String())
+	}
+	var relay relayConfig
+	if err := loadConfig(path, &relay); err != nil {
+		t.Fatal(err)
+	}
+	block, _ := pem.Decode([]byte(relay.Identity.Certificate))
+	if block == nil {
+		t.Fatal("configuration carries no certificate")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left := time.Until(cert.NotAfter); left < 364*24*time.Hour || left > 366*24*time.Hour {
+		t.Fatalf("certificate lasts %v, want about 365 days", left)
+	}
+}
+
+func TestValidityFromDays(t *testing.T) {
+	if _, err := validityFromDays(0); err == nil {
+		t.Fatal("accepted a zero-day certificate")
+	}
+	if _, err := validityFromDays(3651); err == nil {
+		t.Fatal("accepted an unbounded lifetime")
+	}
+	if got, err := validityFromDays(365); err != nil || got != 365*24*time.Hour {
+		t.Fatalf("365 days became %v (%v)", got, err)
+	}
+}
 
 func TestEnrollWithoutLegacyFiles(t *testing.T) {
 	server := httptest.NewUnstartedServer(nil)
@@ -16,7 +57,7 @@ func TestEnrollWithoutLegacyFiles(t *testing.T) {
 	endpoint := "wss://" + server.Listener.Addr().String()
 	path := filepath.Join(t.TempDir(), "relay.local.json")
 	var pin strings.Builder
-	if err := initEnrollmentRelay(path, endpoint, &pin); err != nil {
+	if err := initEnrollmentRelay(path, endpoint, labValidity, &pin); err != nil {
 		t.Fatal(err)
 	}
 	var relay relayConfig

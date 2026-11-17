@@ -92,7 +92,27 @@ func certificatePool(certificate string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
-func issueIdentity(name string, usage x509.ExtKeyUsage) (identity, error) {
+// labValidity is the default lifetime for certificates issued by init and
+// relay-init: long enough to try the product, short enough that a leaked test
+// identity stops working on its own.
+const labValidity = 7 * 24 * time.Hour
+
+// deviceValidity covers the identity a PC presents to its paired phone. The
+// phone pins it by fingerprint, so its expiry is the only clock that can cut a
+// paired device off; issue it well past the Relay certificate instead of
+// forcing a re-pair in the same week.
+const deviceValidity = 365 * 24 * time.Hour
+
+// validityFromDays converts the operator-facing day count, rejecting values
+// that would produce an already-expired or absurdly long certificate.
+func validityFromDays(days int) (time.Duration, error) {
+	if days < 1 || days > 3650 {
+		return 0, errors.New("validity must be between 1 and 3650 days")
+	}
+	return time.Duration(days) * 24 * time.Hour, nil
+}
+
+func issueIdentity(name string, usage x509.ExtKeyUsage, validity time.Duration) (identity, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return identity{}, err
@@ -104,7 +124,7 @@ func issueIdentity(name string, usage x509.ExtKeyUsage) (identity, error) {
 	now := time.Now()
 	cert := &x509.Certificate{
 		SerialNumber: serial.Add(serial, big.NewInt(1)), Subject: pkix.Name{CommonName: name},
-		NotBefore: now.Add(-5 * time.Minute), NotAfter: now.Add(7 * 24 * time.Hour),
+		NotBefore: now.Add(-5 * time.Minute), NotAfter: now.Add(validity),
 		KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{usage},
 	}
 	if ip := net.ParseIP(name); ip != nil {
@@ -134,16 +154,16 @@ func routeToken() (string, error) {
 	return hex.EncodeToString(token[:]), nil
 }
 
-func createLab(directory, rawURL string) error {
+func createLab(directory, rawURL string, validity time.Duration) error {
 	address, err := relayAddress(rawURL)
 	if err != nil {
 		return err
 	}
-	relayIdentity, err := issueIdentity(address.Hostname(), x509.ExtKeyUsageServerAuth)
+	relayIdentity, err := issueIdentity(address.Hostname(), x509.ExtKeyUsageServerAuth, validity)
 	if err != nil {
 		return err
 	}
-	phoneIdentity, err := issueIdentity("phone.agentdeck.test", x509.ExtKeyUsageClientAuth)
+	phoneIdentity, err := issueIdentity("phone.agentdeck.test", x509.ExtKeyUsageClientAuth, validity)
 	if err != nil {
 		return err
 	}
@@ -153,7 +173,7 @@ func createLab(directory, rawURL string) error {
 	configs := make(map[string]any)
 	for _, device := range []string{"a", "b"} {
 		name := device + ".agentdeck.test"
-		agentIdentity, err := issueIdentity(name, x509.ExtKeyUsageServerAuth)
+		agentIdentity, err := issueIdentity(name, x509.ExtKeyUsageServerAuth, validity)
 		if err != nil {
 			return err
 		}

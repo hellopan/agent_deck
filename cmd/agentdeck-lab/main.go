@@ -56,13 +56,18 @@ func run(ctx context.Context, args []string) error {
 	case "init":
 		directory := options.String("out", "", "new directory for generated test credentials")
 		relayURL := options.String("relay-url", "wss://127.0.0.1:8443", "relay origin for the generated endpoints")
+		validityDays := options.Int("validity", 7, "certificate lifetime in days")
 		if err := parseFlags(options, args[1:]); err != nil {
 			return err
 		}
 		if *directory == "" {
 			return errors.New("init requires -out")
 		}
-		return createLab(*directory, *relayURL)
+		validity, err := validityFromDays(*validityDays)
+		if err != nil {
+			return err
+		}
+		return createLab(*directory, *relayURL, validity)
 	case "relay":
 		path := options.String("config", "", "relay configuration")
 		listen := options.String("listen", "127.0.0.1:8443", "relay listen address")
@@ -74,10 +79,15 @@ func run(ctx context.Context, args []string) error {
 	case "relay-init":
 		path := options.String("config", "", "new Relay configuration file")
 		endpoint := options.String("relay-url", "", "WSS address phones and PCs can reach")
+		validityDays := options.Int("validity", 7, "certificate lifetime in days")
 		if err := parseFlags(options, args[1:]); err != nil {
 			return err
 		}
-		return initEnrollmentRelay(*path, *endpoint, os.Stdout)
+		validity, err := validityFromDays(*validityDays)
+		if err != nil {
+			return err
+		}
+		return initEnrollmentRelay(*path, *endpoint, validity, os.Stdout)
 	case "relay-fingerprint":
 		path := options.String("config", "", "Relay configuration")
 		if err := parseFlags(options, args[1:]); err != nil {
@@ -91,6 +101,7 @@ func run(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
+		fmt.Fprintf(os.Stderr, "certificate valid until %s\n", cert.Leaf.NotAfter.UTC().Format(time.RFC3339))
 		_, err = fmt.Fprintln(os.Stdout, pairingFingerprint(cert.Leaf))
 		return err
 	case "enroll":
