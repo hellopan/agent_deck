@@ -65,8 +65,24 @@ internal sealed class ProjectEditor : Form
             HeaderText = "本机目录", DataPropertyName = nameof(Project.Directory),
             AutoSizeMode = DataGridViewAutoSizeColumnMode.Fill, ReadOnly = true
         });
+        // Read-only is the default, so an old list opens with every project on
+        // the strict scope instead of looking writable by accident.
+        var mode = new DataGridViewComboBoxColumn
+        {
+            HeaderText = "权限", DataPropertyName = nameof(Project.ModeText), Width = 88,
+            FlatStyle = FlatStyle.Flat, DisplayStyle = DataGridViewComboBoxDisplayStyle.Nothing
+        };
+        mode.Items.AddRange("只读", "可写");
+        grid.Columns.Add(mode);
         grid.Columns.Add(new DataGridViewCheckBoxColumn
             { HeaderText = "启用", DataPropertyName = nameof(Project.Enabled), Width = 65 });
+        // A writable project is the wider grant, so it gets the amber used
+        // everywhere else for "needs a second look" instead of plain white text.
+        grid.CellFormatting += (_, e) =>
+        {
+            if (e.ColumnIndex != mode.Index) return;
+            e.CellStyle!.ForeColor = (string?)e.Value == "可写" ? DeckTheme.Warning : DeckTheme.Muted;
+        };
         // DataGridView has no empty state, and an empty grid with a header row
         // reads as a control that failed to load. The text is painted over the
         // body area instead of added as a label, so the header stays visible.
@@ -104,12 +120,13 @@ internal sealed class ProjectEditor : Form
 
         var layout = DeckTheme.Table(new Padding(26, 18, 26, 20));
         DeckTheme.Row(layout, DeckTheme.Label("项目授权", DeckTheme.Heading), 52);
-        DeckTheme.Row(layout, DeckTheme.Label("新增项目默认停用。项目 ID 可用小写字母、数字、连字符和下划线。",
+        DeckTheme.Row(layout, DeckTheme.Label("新增项目默认停用、只读；点「权限」列可改为可写。项目 ID 用小写字母、数字、连字符。",
             DeckTheme.Body, DeckTheme.Muted), 45);
         var frame = new DeckTheme.CardPanel();
         frame.Controls.Add(grid);
         DeckTheme.Row(layout, frame, 100, fill: true);
-        var hint = DeckTheme.Label("双击项目 ID 编辑；启用后，写入会在该目录内校验。", DeckTheme.Tiny, DeckTheme.Dim);
+        var hint = DeckTheme.Label("只读：任务只能读，写文件要逐次审批。可写：目录内可自由读写，目录外仍然不能碰。",
+            DeckTheme.Tiny, DeckTheme.Dim);
         DeckTheme.Row(layout, new Panel(), 6);
         DeckTheme.Row(layout, hint, 20);
         DeckTheme.Row(layout, actions, 40);
@@ -142,6 +159,8 @@ internal sealed class ProjectEditor : Form
                 throw new InvalidDataException("项目 ID 必须有效且唯一。");
             if (!Path.IsPathFullyQualified(entry.Directory))
                 throw new InvalidDataException($"项目 {entry.Id} 需要本机绝对路径。");
+            if (entry.Mode is not ("read-only" or "workspace-write"))
+                throw new InvalidDataException($"项目 {entry.Id} 的权限必须是只读或可写。");
             if (entry.Enabled)
                 ValidateDirectory(entry.Directory);
         }
@@ -213,5 +232,15 @@ internal sealed class ProjectEditor : Form
         public string Id { get; set; } = "";
         public string Directory { get; init; } = "";
         public bool Enabled { get; set; }
+        public string Mode { get; set; } = "read-only";
+
+        // The grid needs a Chinese label, the file needs the protocol value.
+        // Keeping one property for each means neither side has to translate.
+        [JsonIgnore]
+        public string ModeText
+        {
+            get => Mode == "workspace-write" ? "可写" : "只读";
+            set => Mode = value == "可写" ? "workspace-write" : "read-only";
+        }
     }
 }

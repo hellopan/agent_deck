@@ -24,7 +24,7 @@ func TestTurnFiltersOutput(t *testing.T) {
 `
 	var wire bytes.Buffer
 	var events []TaskEvent
-	result, err := runTurn(t.Context(), "workspace", "", "test", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(event TaskEvent) error {
+	result, err := runTurn(t.Context(), Config{ProjectDir: "workspace"}, "", "test", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(event TaskEvent) error {
 		events = append(events, event)
 		return nil
 	}, denyAll)
@@ -42,12 +42,34 @@ func TestTurnFiltersOutput(t *testing.T) {
 	}
 }
 
+func TestWritableProjectAsksForWorkspaceWrite(t *testing.T) {
+	const input = `{"id":2,"result":{"thread":{"id":"local-thread"}}}
+{"id":3,"result":{"turn":{"id":"active-turn"}}}
+{"method":"turn/completed","params":{"threadId":"local-thread","turn":{"id":"active-turn","status":"completed"}}}
+`
+	var wire bytes.Buffer
+	config := Config{ProjectDir: "workspace", Sandbox: "workspace-write"}
+	if _, err := runTurn(t.Context(), config, "", "test", json.NewEncoder(&wire),
+		bufio.NewScanner(strings.NewReader(input)), func(TaskEvent) error { return nil }, denyAll); err != nil {
+		t.Fatal(err)
+	}
+	if got := wire.String(); !strings.Contains(got, `"sandbox":"workspace-write"`) ||
+		!strings.Contains(got, `"approvalPolicy":"on-request"`) {
+		t.Fatalf("a writable project must widen only the sandbox: %s", got)
+	}
+	// Anything unrecognised falls back to the strict scope rather than passing
+	// a value Codex might interpret as a wider one.
+	if got := (Config{Sandbox: "danger-full-access"}).SandboxName(); got != "read-only" {
+		t.Fatalf("unknown sandbox resolved to %q", got)
+	}
+}
+
 func TestTurnStopsOnForeignApprovalRequest(t *testing.T) {
 	const input = `{"id":2,"result":{"thread":{"id":"local-thread"}}}
 {"id":3,"method":"item/commandExecution/requestApproval","params":{"threadId":"other-thread","turnId":"other-turn"}}
 `
 	var wire bytes.Buffer
-	_, err := runTurn(t.Context(), "workspace", "", "test", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(event TaskEvent) error {
+	_, err := runTurn(t.Context(), Config{ProjectDir: "workspace"}, "", "test", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(event TaskEvent) error {
 		t.Fatalf("unexpected event: %+v", event)
 		return nil
 	}, denyAll)
@@ -73,7 +95,7 @@ func TestTurnAppliesPerRequestDecisions(t *testing.T) {
 		asked = append(asked, approval)
 		return approval.Kind == commandApprovalKind, nil
 	}
-	result, err := runTurn(t.Context(), "workspace", "", "test", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(event TaskEvent) error {
+	result, err := runTurn(t.Context(), Config{ProjectDir: "workspace"}, "", "test", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(event TaskEvent) error {
 		events = append(events, event)
 		return nil
 	}, decide)
@@ -116,7 +138,7 @@ func TestTurnRefusesSessionPermissionsWithoutAsking(t *testing.T) {
 		asked++
 		return true, nil
 	}
-	result, err := runTurn(t.Context(), "workspace", "", "test", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(TaskEvent) error {
+	result, err := runTurn(t.Context(), Config{ProjectDir: "workspace"}, "", "test", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(TaskEvent) error {
 		return nil
 	}, decide)
 	if err != nil || result.Status != "completed" || asked != 0 {
@@ -135,7 +157,7 @@ func TestTurnStartsStoredThread(t *testing.T) {
 {"method":"turn/completed","params":{"threadId":"01a1e02e-b9a6-74c3-9462-b22f77b5cee0","turn":{"id":"turn","status":"completed"}}}
 `
 	var wire bytes.Buffer
-	result, err := runTurn(t.Context(), "workspace", "", "第一句", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(TaskEvent) error {
+	result, err := runTurn(t.Context(), Config{ProjectDir: "workspace"}, "", "第一句", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(TaskEvent) error {
 		return nil
 	}, denyAll)
 	if err != nil || result.Status != "completed" || result.ThreadID == "" {
@@ -154,7 +176,7 @@ func TestTurnResumesKnownThread(t *testing.T) {
 {"method":"turn/completed","params":{"threadId":"01a1e02e-b9a6-74c3-9462-b22f77b5cee0","turn":{"id":"turn","status":"completed"}}}
 `
 	var wire bytes.Buffer
-	result, err := runTurn(t.Context(), "workspace", thread, "接着改", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(TaskEvent) error {
+	result, err := runTurn(t.Context(), Config{ProjectDir: "workspace"}, thread, "接着改", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(TaskEvent) error {
 		return nil
 	}, denyAll)
 	if err != nil || result.Status != "completed" || result.ThreadID != thread {
@@ -172,7 +194,7 @@ func TestTurnRefusesUnresumableThread(t *testing.T) {
 	const input = `{"id":2,"error":{"code":-32600,"message":"no rollout found for thread id 01a1e02e-b9a6-74c3-9462-b22f77b5cee0"}}
 `
 	var wire bytes.Buffer
-	_, err := runTurn(t.Context(), "workspace", "01a1e02e-b9a6-74c3-9462-b22f77b5cee0", "接着改", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(TaskEvent) error {
+	_, err := runTurn(t.Context(), Config{ProjectDir: "workspace"}, "01a1e02e-b9a6-74c3-9462-b22f77b5cee0", "接着改", json.NewEncoder(&wire), bufio.NewScanner(strings.NewReader(input)), func(TaskEvent) error {
 		t.Fatalf("unexpected event")
 		return nil
 	}, denyAll)

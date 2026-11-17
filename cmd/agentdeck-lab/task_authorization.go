@@ -11,15 +11,18 @@ import (
 var errProjectRevoked = errors.New("project authorization was removed or changed")
 var errTaskCanceled = errors.New("local task cancellation requested")
 
-func runWhileAuthorized(ctx context.Context, config codexOptions, directory string, run func(context.Context, func() error) (string, error), cancellation func() (bool, error)) (string, error) {
+// runWhileAuthorized rechecks the project every half second. The sandbox is part
+// of the check: narrowing a project from writable to read-only has to interrupt
+// the turn, because the running thread was started with the wider scope.
+func runWhileAuthorized(ctx context.Context, config codexOptions, directory, sandbox string, run func(context.Context, func() error) (string, error), cancellation func() (bool, error)) (string, error) {
 	runCtx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	check := func() error {
 		if err := context.Cause(runCtx); err != nil {
 			return err
 		}
-		current, err := projects.Resolve(config.policy, config.projectID)
-		if err != nil || current != directory {
+		current, mode, err := projects.ResolveMode(config.policy, config.projectID)
+		if err != nil || current != directory || string(mode) != sandbox {
 			cancel(errProjectRevoked)
 			return errProjectRevoked
 		}

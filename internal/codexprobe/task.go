@@ -33,12 +33,12 @@ type TaskRun struct {
 // lose the context the follow-up depends on.
 var ErrThreadUnavailable = errors.New("the conversation can no longer be resumed")
 
-// RunReadOnlyTask runs one local turn under a read-only sandbox. An empty
+// RunTask runs one local turn in the sandbox the config names. An empty
 // threadID starts a new conversation; a non-empty one resumes it, so the model
 // keeps everything said in earlier turns. Anything the sandbox refuses is
 // offered to decide before the turn continues, so the caller owns both the
 // authorization and the approval surface. This is not a remote execution API.
-func RunReadOnlyTask(ctx context.Context, config Config, threadID, prompt string, emit func(TaskEvent) error, decide Decider) (TaskRun, error) {
+func RunTask(ctx context.Context, config Config, threadID, prompt string, emit func(TaskEvent) error, decide Decider) (TaskRun, error) {
 	if strings.TrimSpace(prompt) == "" || len(prompt) > 16*1024 || !utf8.ValidString(prompt) || emit == nil || decide == nil {
 		return TaskRun{}, errors.New("task requires a UTF-8 prompt of at most 16 KiB, an event handler and an approval decider")
 	}
@@ -48,7 +48,7 @@ func RunReadOnlyTask(ctx context.Context, config Config, threadID, prompt string
 	var run TaskRun
 	err := withAppServer(ctx, config, func(writer *json.Encoder, reader *bufio.Scanner) error {
 		var err error
-		run, err = runTurn(ctx, config.ProjectDir, threadID, prompt, writer, reader, emit, decide)
+		run, err = runTurn(ctx, config, threadID, prompt, writer, reader, emit, decide)
 		return err
 	})
 	return run, err
@@ -75,11 +75,11 @@ func ValidThreadID(id string) bool {
 }
 
 // openSession creates or resumes the conversation this turn runs in. Resuming
-// keeps every earlier turn; starting keeps a fresh one. Both pin the read-only
-// sandbox and the per-request approval policy, because a resumed thread would
-// otherwise run with whatever the stored session was created with.
-func openSession(ctx context.Context, directory, threadID string, writer *json.Encoder, reader *bufio.Scanner) (string, error) {
-	params := map[string]any{"cwd": directory, "sandbox": "read-only", "approvalPolicy": "on-request"}
+// keeps every earlier turn; starting keeps a fresh one. Both pin the sandbox and
+// the per-request approval policy, because a resumed thread would otherwise run
+// with whatever the stored session was created with.
+func openSession(ctx context.Context, directory, sandbox, threadID string, writer *json.Encoder, reader *bufio.Scanner) (string, error) {
+	params := map[string]any{"cwd": directory, "sandbox": sandbox, "approvalPolicy": "on-request"}
 	method := "thread/start"
 	if threadID == "" {
 		// A thread that is not stored has no rollout, and a thread without a
@@ -112,8 +112,8 @@ func openSession(ctx context.Context, directory, threadID string, writer *json.E
 	return thread.Thread.ID, nil
 }
 
-func runTurn(ctx context.Context, directory, threadID, prompt string, writer *json.Encoder, reader *bufio.Scanner, emit func(TaskEvent) error, decide Decider) (TaskRun, error) {
-	threadID, err := openSession(ctx, directory, threadID, writer, reader)
+func runTurn(ctx context.Context, config Config, threadID, prompt string, writer *json.Encoder, reader *bufio.Scanner, emit func(TaskEvent) error, decide Decider) (TaskRun, error) {
+	threadID, err := openSession(ctx, config.ProjectDir, config.SandboxName(), threadID, writer, reader)
 	if err != nil {
 		return TaskRun{}, err
 	}

@@ -28,6 +28,8 @@ internal sealed partial class ReviewWindow
     private readonly Label buddyPathLine = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
     private readonly TextBox logs = new();
     private string codexVersion = "";
+    private TableLayoutPanel? projectBody;
+    private int projectRulesRow = -1;
 
     private Control SettingsPage()
     {
@@ -50,8 +52,10 @@ internal sealed partial class ReviewWindow
         bottom.Controls.Add(ServiceCard(), 0, 0);
         bottom.Controls.Add(new Panel { BackColor = DeckTheme.Canvas }, 1, 0);
         bottom.Controls.Add(DetectionCard(), 2, 0);
-        DeckTheme.Row(body, bottom, 204);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Canvas }, 12);
+        // 216, not 204: three 44px editor rows plus the header, the spacers and
+        // the hint below them. At 204 the hint spilled out of the card and the
+        // page grew a scrollbar for twelve pixels nobody could see.
+        DeckTheme.Row(body, bottom, 216);        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Canvas }, 12);
         DeckTheme.Row(body, LogsCard(), 54);
         var page = Page("设置", "只在这几个目录里工作。其余路径一律拒绝。", body);
         page.VisibleChanged += (_, _) => { if (page.Visible) RefreshSettings(); };
@@ -67,8 +71,26 @@ internal sealed partial class ReviewWindow
         projectSummary.Anchor = AnchorStyles.Right;
         DeckTheme.Round(projectSummary, 9);
         var card = Card("项目白名单", out var body, note: "添加后默认停用", action: projectSummary);
+        projectBody = body;
         DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 4);
         DeckTheme.Row(body, projectTable, 100, fill: true);
+
+        // The allow/deny rules are onboarding text: they matter when the list is
+        // empty and cost 59px the rest of the time. Keeping them in their own row
+        // lets RefreshProjects collapse it, which is what gives the table enough
+        // height to show three projects instead of slicing the second one.
+        var rulesBlock = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 1, RowCount = 4
+        };
+        rulesBlock.RowStyles.Add(new RowStyle(SizeType.Absolute, 6));
+        rulesBlock.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
+        rulesBlock.RowStyles.Add(new RowStyle(SizeType.Absolute, 6));
+        rulesBlock.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+        rulesBlock.Controls.Add(new Panel { BackColor = DeckTheme.Surface, Dock = DockStyle.Fill, Margin = Padding.Empty }, 0, 0);
+        rulesBlock.Controls.Add(DeckTheme.Divider(DeckTheme.Line), 0, 1);
+        rulesBlock.Controls.Add(new Panel { BackColor = DeckTheme.Surface, Dock = DockStyle.Fill, Margin = Padding.Empty }, 0, 2);
 
         var rules = new TableLayoutPanel
         {
@@ -83,10 +105,9 @@ internal sealed partial class ReviewWindow
         rules.Controls.Add(RuleText("只在启用的目录内读写，子目录继承父目录权限"), 1, 0);
         rules.Controls.Add(RuleKey("拒绝", DeckTheme.Danger), 0, 1);
         rules.Controls.Add(RuleText("符号链接、目录联接、含 .. 的越界路径，以及未在清单中的任何路径"), 1, 1);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 6);
-        DeckTheme.Row(body, DeckTheme.Divider(DeckTheme.Line), 1);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 6);
-        DeckTheme.Row(body, rules, 46);
+        rulesBlock.Controls.Add(rules, 0, 3);
+        projectRulesRow = body.RowCount;
+        DeckTheme.Row(body, rulesBlock, 59);
 
         var actions = new TableLayoutPanel
         {
@@ -294,12 +315,25 @@ internal sealed partial class ReviewWindow
         if (codexLine.Text == "尚未检测") _ = DetectToolsAsync(fill: true);
     }
 
+    private void SetProjectRows(List<(string Directory, string Id, bool Enabled, string Mode)> rows)
+    {
+        projectTable.SetRows(rows);
+        if (projectBody is null || projectRulesRow < 0 || projectRulesRow >= projectBody.RowStyles.Count)
+            return;
+        // Rules are onboarding text: shown when the list is empty, collapsed as
+        // soon as it has entries so the table can show three projects instead of
+        // slicing the second one.
+        projectBody.RowStyles[projectRulesRow] =
+            new RowStyle(SizeType.Absolute, rows.Count == 0 ? 59 : 0);
+        projectBody.PerformLayout();
+    }
+
     private void RefreshProjects()
     {
         var path = ProjectsPath;
         if (!File.Exists(path))
         {
-            projectTable.SetRows([]);
+            SetProjectRows([]);
             projectSummary.Text = "0 个目录";
             projectSummary.ForeColor = DeckTheme.Dim;
             projectSummary.BackColor = DeckTheme.Surface2;
@@ -311,21 +345,22 @@ internal sealed partial class ReviewWindow
             if (!document.RootElement.TryGetProperty("projects", out var projects) ||
                 projects.ValueKind != JsonValueKind.Array)
             {
-                projectTable.SetRows([]);
+                SetProjectRows([]);
                 projectSummary.Text = "清单格式不正确";
                 projectSummary.ForeColor = DeckTheme.Danger;
                 projectSummary.BackColor = DeckTheme.Tint(DeckTheme.Danger);
                 return;
             }
-            var rows = new List<(string Directory, string Id, bool Enabled)>();
+            var rows = new List<(string Directory, string Id, bool Enabled, string Mode)>();
             foreach (var project in projects.EnumerateArray())
             {
                 var id = project.TryGetProperty("id", out var i) ? i.GetString() ?? "" : "";
                 var directory = project.TryGetProperty("directory", out var d) ? d.GetString() ?? "" : "";
                 var on = project.TryGetProperty("enabled", out var e) && e.GetBoolean();
-                rows.Add((directory, id, on));
+                var mode = project.TryGetProperty("mode", out var m) ? m.GetString() ?? "" : "";
+                rows.Add((directory, id, on, mode));
             }
-            projectTable.SetRows(rows);
+            SetProjectRows(rows);
             int enabled = rows.Count(row => row.Enabled);
             projectSummary.Text = $"{rows.Count} 个目录";
             projectSummary.ForeColor = enabled > 0 ? DeckTheme.Good : DeckTheme.Dim;
@@ -333,7 +368,7 @@ internal sealed partial class ReviewWindow
         }
         catch (Exception error) when (error is IOException or JsonException)
         {
-            projectTable.SetRows([]);
+            SetProjectRows([]);
             projectSummary.Text = "读取失败";
             projectSummary.ForeColor = DeckTheme.Danger;
             projectSummary.BackColor = DeckTheme.Tint(DeckTheme.Danger);
@@ -432,7 +467,7 @@ internal sealed partial class ReviewWindow
     // default look reads as an editable text box rather than a table.
     private sealed class WhitelistView : ScrollableControl
     {
-        private readonly List<(string Directory, string Id, bool Enabled)> rows = [];
+        private readonly List<(string Directory, string Id, bool Enabled, string Mode)> rows = [];
 
         internal WhitelistView()
         {
@@ -442,7 +477,7 @@ internal sealed partial class ReviewWindow
             AutoScroll = true;
         }
 
-        internal void SetRows(IEnumerable<(string Directory, string Id, bool Enabled)> value)
+        internal void SetRows(IEnumerable<(string Directory, string Id, bool Enabled, string Mode)> value)
         {
             rows.Clear();
             rows.AddRange(value);
@@ -458,30 +493,38 @@ internal sealed partial class ReviewWindow
             const int left = 5;
             int right = Width - 4 - (VerticalScroll.Visible ? SystemInformation.VerticalScrollBarWidth : 0);
             const int idWidth = 118;
+            const int modeWidth = 56;
             const int onWidth = 60;
             int headerHeight = 28;
+
+            if (rows.Count == 0)
+            {
+                // No header row for an empty list: column titles over nothing are
+                // noise, and dropping them is what lets both onboarding lines fit
+                // in the space the card can spare.
+                TextRenderer.DrawText(g, "还没有授权清单", DeckTheme.Small,
+                    new Point(left, 4), DeckTheme.Muted, TextFormatFlags.NoPadding);
+                TextRenderer.DrawText(g, "点「管理项目…」添加第一个目录", DeckTheme.Small,
+                    new Point(left, 26), DeckTheme.Dim, TextFormatFlags.NoPadding);
+                return;
+            }
+
             using (var line = new Pen(DeckTheme.Line2))
                 g.DrawLine(line, 0, headerHeight - 1, Width, headerHeight - 1);
+            int idLeft = right - idWidth - modeWidth - onWidth;
             TextRenderer.DrawText(g, "本机目录", DeckTheme.Tiny, new Point(left, 8), DeckTheme.Dim,
                 TextFormatFlags.NoPadding);
-            TextRenderer.DrawText(g, "项目 ID", DeckTheme.Tiny, new Point(right - idWidth - onWidth, 8),
+            TextRenderer.DrawText(g, "项目 ID", DeckTheme.Tiny, new Point(idLeft, 8),
+                DeckTheme.Dim, TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, "权限", DeckTheme.Tiny, new Point(idLeft + idWidth, 8),
                 DeckTheme.Dim, TextFormatFlags.NoPadding);
             TextRenderer.DrawText(g, "启用", DeckTheme.Tiny, new Point(right - onWidth + 6, 8),
                 DeckTheme.Dim, TextFormatFlags.NoPadding);
 
-            if (rows.Count == 0)
-            {
-                TextRenderer.DrawText(g, "还没有授权清单", DeckTheme.Small,
-                    new Point(left, headerHeight + 14), DeckTheme.Muted, TextFormatFlags.NoPadding);
-                TextRenderer.DrawText(g, "点「管理项目…」添加第一个目录", DeckTheme.Small,
-                    new Point(left, headerHeight + 36), DeckTheme.Dim, TextFormatFlags.NoPadding);
-                return;
-            }
-
             var state = g.Save();
             g.SetClip(new Rectangle(0, headerHeight, Width, Height - headerHeight));
             int y = headerHeight + AutoScrollPosition.Y;
-            foreach (var (directory, id, enabled) in rows)
+            foreach (var (directory, id, enabled, mode) in rows)
             {
                 if (y > Height) break;
                 if (y + 36 < headerHeight)
@@ -490,13 +533,16 @@ internal sealed partial class ReviewWindow
                     continue;
                 }
                 int cellY = y + 11;
-                int directoryWidth = Math.Max(40, Width - idWidth - onWidth - left - 12);
+                int directoryWidth = Math.Max(40, Width - idWidth - modeWidth - onWidth - left - 12);
                 TextRenderer.DrawText(g, directory, DeckTheme.MonoSmall,
                     new Rectangle(left, cellY, directoryWidth, 18), DeckTheme.Muted,
                     TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
                 TextRenderer.DrawText(g, id, DeckTheme.MonoMicro,
-                    new Rectangle(right - idWidth - onWidth, cellY + 1, idWidth, 18), DeckTheme.Dim,
+                    new Rectangle(idLeft, cellY + 1, idWidth, 18), DeckTheme.Dim,
                     TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
+                TextRenderer.DrawText(g, mode == "workspace-write" ? "可写" : "只读", DeckTheme.Small,
+                    new Rectangle(idLeft + idWidth, cellY, modeWidth, 18),
+                    mode == "workspace-write" ? DeckTheme.Warning : DeckTheme.Dim, TextFormatFlags.NoPadding);
                 TextRenderer.DrawText(g, enabled ? "启用" : "停用", DeckTheme.Small,
                     new Rectangle(right - onWidth + 6, cellY, onWidth - 8, 18),
                     enabled ? DeckTheme.Good : DeckTheme.Dim, TextFormatFlags.NoPadding);

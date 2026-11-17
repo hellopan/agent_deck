@@ -306,8 +306,8 @@ func (a *agentRuntime) execute(ctx context.Context, task *queuedTask) {
 	a.logger.Printf("task %s started in %s", shortID(task.TaskID), task.Record.ProjectID)
 
 	var threadID string
-	status, runErr := runWhileAuthorized(ctx, policy, resolved.ProjectDir, func(runCtx context.Context, check func() error) (string, error) {
-		run, err := codexprobe.RunReadOnlyTask(runCtx, resolved, task.Record.ThreadID, task.Record.Prompt, func(event codexprobe.TaskEvent) error {
+	status, runErr := runWhileAuthorized(ctx, policy, resolved.ProjectDir, resolved.SandboxName(), func(runCtx context.Context, check func() error) (string, error) {
+		run, err := codexprobe.RunTask(runCtx, resolved, task.Record.ThreadID, task.Record.Prompt, func(event codexprobe.TaskEvent) error {
 			if err := check(); err != nil {
 				return err
 			}

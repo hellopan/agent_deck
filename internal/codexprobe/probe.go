@@ -18,6 +18,18 @@ type Config struct {
 	Executable string
 	ProjectDir string
 	CodexHome  string
+	// Sandbox is the Codex sandbox for this turn: "read-only" or
+	// "workspace-write". Empty means read-only, so a caller that forgets it
+	// gets the strict scope rather than an accidental grant.
+	Sandbox string
+}
+
+// SandboxName returns the sandbox to request, defaulting to read-only.
+func (config Config) SandboxName() string {
+	if config.Sandbox == "workspace-write" {
+		return "workspace-write"
+	}
+	return "read-only"
 }
 
 type Status struct {

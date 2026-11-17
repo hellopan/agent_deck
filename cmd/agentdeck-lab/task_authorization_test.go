@@ -36,7 +36,7 @@ func TestRunningTaskObservesLocalCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	status, err := runWhileAuthorized(ctx, codexOptions{policy: policy, projectID: "alpha"}, dir,
+	status, err := runWhileAuthorized(ctx, codexOptions{policy: policy, projectID: "alpha"}, dir, "read-only",
 		func(runCtx context.Context, _ func() error) (string, error) {
 			for range 2 {
 				if err := codexprobe.RequestCancellation(dir, journal.ID); err != nil {
@@ -52,7 +52,7 @@ func TestRunningTaskObservesLocalCancellation(t *testing.T) {
 }
 
 func TestRunningTaskStopsOnProjectRevocation(t *testing.T) {
-	for _, change := range []string{"disable", "move", "remove"} {
+	for _, change := range []string{"disable", "move", "remove", "narrow"} {
 		t.Run(change, func(t *testing.T) {
 			dir, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
@@ -60,6 +60,10 @@ func TestRunningTaskStopsOnProjectRevocation(t *testing.T) {
 			}
 			policy := filepath.Join(dir, "projects.json")
 			entry := projects.Entry{ID: "alpha", Directory: dir, Enabled: true}
+			if change == "narrow" {
+				// Started writable, switched to read-only while the turn runs.
+				entry.Mode = string(projects.ModeWorkspaceWrite)
+			}
 			writePolicy := func(entries ...projects.Entry) {
 				t.Helper()
 				data, err := json.Marshal(map[string][]projects.Entry{"projects": entries})
@@ -73,7 +77,11 @@ func TestRunningTaskStopsOnProjectRevocation(t *testing.T) {
 			writePolicy(entry)
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
-			status, err := runWhileAuthorized(ctx, codexOptions{policy: policy, projectID: "alpha"}, dir,
+			expected := "read-only"
+			if change == "narrow" {
+				expected = "workspace-write"
+			}
+			status, err := runWhileAuthorized(ctx, codexOptions{policy: policy, projectID: "alpha"}, dir, expected,
 				func(runCtx context.Context, check func() error) (string, error) {
 					switch change {
 					case "disable":
@@ -84,6 +92,9 @@ func TestRunningTaskStopsOnProjectRevocation(t *testing.T) {
 						writePolicy(entry)
 					case "remove":
 						writePolicy()
+					case "narrow":
+						entry.Mode = string(projects.ModeReadOnly)
+						writePolicy(entry)
 					}
 					<-runCtx.Done()
 					return "", check()
@@ -108,7 +119,7 @@ func TestRevocationStopsNextOutputWithoutPolling(t *testing.T) {
 	if err := os.WriteFile(policy, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	status, err := runWhileAuthorized(t.Context(), codexOptions{policy: policy, projectID: "alpha"}, dir,
+	status, err := runWhileAuthorized(t.Context(), codexOptions{policy: policy, projectID: "alpha"}, dir, "read-only",
 		func(_ context.Context, check func() error) (string, error) {
 			if err := os.WriteFile(policy, []byte(`{"projects":[]}`), 0o600); err != nil {
 				t.Fatal(err)

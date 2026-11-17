@@ -22,6 +22,33 @@ type Entry struct {
 	ID        string `json:"id"`
 	Directory string `json:"directory"`
 	Enabled   bool   `json:"enabled"`
+	// Mode is the Codex sandbox this project runs under. An empty value means
+	// read-only, so every list written before modes existed keeps the strict
+	// setting instead of silently granting writes.
+	Mode string `json:"mode,omitempty"`
+}
+
+// Mode is the sandbox a task runs under. Only Codex's two local scopes are
+// accepted: danger-full-access would let a phone request escape the project
+// directory, which is the one thing the authorization list is for.
+type Mode string
+
+const (
+	ModeReadOnly       Mode = "read-only"
+	ModeWorkspaceWrite Mode = "workspace-write"
+)
+
+func parseMode(raw string) (Mode, error) {
+	switch raw {
+	case "":
+		return ModeReadOnly, nil
+	case string(ModeReadOnly):
+		return ModeReadOnly, nil
+	case string(ModeWorkspaceWrite):
+		return ModeWorkspaceWrite, nil
+	default:
+		return "", fmt.Errorf("project policy contains an unsupported mode %q", raw)
+	}
 }
 
 // List returns the IDs of enabled projects with usable local directories.
@@ -33,7 +60,7 @@ func List(policyPath string) ([]string, error) {
 	}
 	ids := make([]string, 0, len(entries))
 	for id, entry := range entries {
-		if _, err := resolveEntry(entry); err == nil {
+		if _, _, err := resolveEntry(entry); err == nil {
 			ids = append(ids, id)
 		}
 	}
@@ -44,28 +71,40 @@ func List(policyPath string) ([]string, error) {
 // Resolve re-reads the local policy on each use and returns only enabled projects.
 // Its result is a launch directory. Child process access needs a separate sandbox.
 func Resolve(policyPath, projectID string) (string, error) {
+	directory, _, err := ResolveMode(policyPath, projectID)
+	return directory, err
+}
+
+// ResolveMode is Resolve plus the sandbox the project is allowed to run under.
+// Callers that start a turn must use it: the directory alone says nothing about
+// whether the task may write.
+func ResolveMode(policyPath, projectID string) (string, Mode, error) {
 	if !validID.MatchString(projectID) {
-		return "", ErrNotAuthorized
+		return "", "", ErrNotAuthorized
 	}
 	entries, err := readPolicy(policyPath)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	return resolveEntry(entries[projectID])
 }
 
-func resolveEntry(entry Entry) (string, error) {
+func resolveEntry(entry Entry) (string, Mode, error) {
 	if !entry.Enabled {
-		return "", ErrNotAuthorized
+		return "", "", ErrNotAuthorized
+	}
+	mode, err := parseMode(entry.Mode)
+	if err != nil {
+		return "", "", err
 	}
 	if !filepath.IsAbs(entry.Directory) {
-		return "", ErrDirectory
+		return "", "", ErrDirectory
 	}
 	path := filepath.Clean(entry.Directory)
 	if !directDirectory(path) {
-		return "", ErrDirectory
+		return "", "", ErrDirectory
 	}
-	return path, nil
+	return path, mode, nil
 }
 
 func directDirectory(path string) bool {
@@ -120,6 +159,9 @@ func readPolicy(path string) (map[string]Entry, error) {
 		}
 		if _, exists := entries[entry.ID]; exists {
 			return nil, fmt.Errorf("project policy contains duplicate ID %q", entry.ID)
+		}
+		if _, err := parseMode(entry.Mode); err != nil {
+			return nil, err
 		}
 		entries[entry.ID] = entry
 	}

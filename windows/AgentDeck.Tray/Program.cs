@@ -362,7 +362,7 @@ internal sealed partial class ReviewWindow : Form
     }
 
     private sealed record QueueItem(string TaskId, string ProjectId, string Directory, string Status,
-        DateTimeOffset SubmittedAt, string Summary, string Prompt)
+        DateTimeOffset SubmittedAt, string Summary, string Prompt, string? Sandbox = null)
     {
         public override string ToString() => $"{ProjectId}    {Status}    {Summary}";
     }

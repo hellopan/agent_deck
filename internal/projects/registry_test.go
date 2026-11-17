@@ -56,6 +56,32 @@ func TestResolveRejectsAmbiguousPolicyAndMissingDirectory(t *testing.T) {
 	}
 }
 
+func TestModeDefaultsToReadOnlyAndRejectsUnknownScopes(t *testing.T) {
+	directory := t.TempDir()
+	policy := filepath.Join(directory, "projects.json")
+	project, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A list written before modes existed has no mode field at all; it must keep
+	// resolving read-only instead of failing to load.
+	writePolicy(t, policy, Entry{ID: "alpha", Directory: project, Enabled: true})
+	if _, mode, err := ResolveMode(policy, "alpha"); err != nil || mode != ModeReadOnly {
+		t.Fatalf("legacy entry resolved %q, %v", mode, err)
+	}
+	writePolicy(t, policy, Entry{ID: "alpha", Directory: project, Enabled: true, Mode: "workspace-write"})
+	if _, mode, err := ResolveMode(policy, "alpha"); err != nil || mode != ModeWorkspaceWrite {
+		t.Fatalf("writable entry resolved %q, %v", mode, err)
+	}
+	// danger-full-access would let a phone request leave the project directory.
+	for _, bad := range []string{"danger-full-access", "write", "READ-ONLY"} {
+		writePolicy(t, policy, Entry{ID: "alpha", Directory: project, Enabled: true, Mode: bad})
+		if got, err := Resolve(policy, "alpha"); got != "" || err == nil {
+			t.Fatalf("mode %q resolved %q, %v", bad, got, err)
+		}
+	}
+}
+
 func writePolicy(t *testing.T, path string, entries ...Entry) {
 	t.Helper()
 	data, err := json.Marshal(struct {

@@ -40,6 +40,7 @@ internal static class Smoke
         main.PerformLayout();
         select.Invoke(main, [2]);
         main.PerformLayout();
+        Render(main, Path.Combine(args[0], "settings-empty.png"));
         var settingsPage = All(main).OfType<TableLayoutPanel>()
             .First(panel => panel.AutoScroll && panel.Controls.Count > 0);
         if (!settingsPage.AutoScroll) throw new InvalidOperationException("Settings page does not scroll.");
@@ -60,8 +61,15 @@ internal static class Smoke
         main.PerformLayout();
         if (!hasSettings) FillQueue(main, ui);
         Render(main, Path.Combine(args[0], "tasks.png"));
+        // Two rows so the permission column is actually rendered, including the
+        // writable label. The file lives in the temp directory: the smoke must
+        // not leave a policy behind in the repository.
+        var policyPath = Path.Combine(Path.GetTempPath(), $"agentdeck-smoke-{Guid.NewGuid():N}.json");
+        File.WriteAllText(policyPath,
+            """{"projects":[{"id":"web-app","directory":"C:/work/web-app","enabled":true,"mode":"workspace-write"},{"id":"api-gateway","directory":"C:/work/api-gateway","enabled":true}]}""");
         select.Invoke(main, [2]);
         main.PerformLayout();
+        Render(main, Path.Combine(args[0], "settings-empty.png"));
         if (!hasSettings)
         {
             // Detection is real here: the smoke waits for it at startup, so this
@@ -70,6 +78,13 @@ internal static class Smoke
             var version = (Label)main.GetType().GetField("codexLine", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .GetValue(main)!;
             if (!version.Text.Contains('.')) throw new InvalidOperationException("Codex version not detected: " + version.Text);
+            // Point the whitelist at the sample policy so the permission column
+            // is visible in this render too, then refresh the card.
+            main.GetType().GetField("projectsPath", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .SetValue(main, policyPath);
+            main.GetType().GetMethod("RefreshProjects", BindingFlags.Instance | BindingFlags.NonPublic)!
+                .Invoke(main, null);
+            main.PerformLayout();
             Render(main, Path.Combine(args[0], "settings.png"));
         }
         var pairButton = All(main).OfType<Button>().Single(b => b.Text == "显示配对二维码");
@@ -91,8 +106,9 @@ internal static class Smoke
         token.Text = new string('b', 64);
         click.Invoke(register, [EventArgs.Empty]);
         if (relay.DialogResult != DialogResult.OK) throw new InvalidOperationException("Valid relay form rejected.");
-        using var project = Create(ui, "ProjectEditor", Path.Combine(args[0], "smoke-only.json"));
+        using var project = Create(ui, "ProjectEditor", policyPath);
         Render(project, Path.Combine(args[0], "project.png"));
+        File.Delete(policyPath);
         using var pair = Create(ui, "PairingWindow", "{\"sample\":\"for layout only\"}",
             (Func<Task<string>>)(() => Task.FromResult("")), (Func<string, Task<string>>)(_ => Task.FromResult("")));
         var qr = All(pair).OfType<Control>().Single(control => control.AccessibleName == "手机配对二维码");
@@ -114,17 +130,18 @@ internal static class Smoke
         var samples = new[]
         {
             ("3f2a91d04b7e4c1d8a2f6e9b0c3d5a71", "web-app", @"C:/work/web-app", "running",
-                "补全用户模块的单元测试", "为 src/user 下的 5 个模块补单元测试，覆盖正常路径与错误分支，跑通后报告覆盖率。"),
+                "补全用户模块的单元测试", "为 src/user 下的 5 个模块补单元测试，覆盖正常路径与错误分支，跑通后报告覆盖率。",
+                "workspace-write"),
             ("7c1e04b2a9d34f8e8b1c2d3e4f5a6b7c", "api-gateway", @"C:/work/api-gateway", "completed",
-                "排查限流中间件的并发问题", "检查 token bucket 在并发下的计数漂移。")
+                "排查限流中间件的并发问题", "检查 token bucket 在并发下的计数漂移。", "read-only")
         };
         Control? first = null;
         int index = 0;
-        foreach (var (id, project, directory, status, summary, prompt) in samples)
+        foreach (var (id, project, directory, status, summary, prompt, sandbox) in samples)
         {
             var itemCtor = itemType.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
                 .OrderByDescending(c => c.GetParameters().Length).First();
-            var item = itemCtor.Invoke([id, project, directory, status, DateTimeOffset.Now, summary, prompt]);
+            var item = itemCtor.Invoke([id, project, directory, status, DateTimeOffset.Now, summary, prompt, sandbox]);
             var rowCtor = rowType.GetConstructors(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public)
                 .First(c => c.GetParameters().Length == 1);
             var row = (Control)rowCtor.Invoke([item]);

@@ -70,6 +70,9 @@ type queueItem struct {
 	// ThreadID is the conversation this turn belongs to. It is empty until a
 	// first turn has actually run, because only Codex can name the thread.
 	ThreadID string `json:"threadId,omitempty"`
+	// Sandbox is the project's current mode. It is read from the policy on each
+	// listing, so changing a project to read-only shows up in the queue at once.
+	Sandbox string `json:"sandbox"`
 }
 
 type queuedTask struct {
@@ -355,7 +358,8 @@ func listQueue(opts peerOptions) ([]queueItem, error) {
 		if err != nil {
 			return nil, err
 		}
-		if _, err := projects.Resolve(opts.policy, record.ProjectID); err != nil {
+		_, mode, err := projects.ResolveMode(opts.policy, record.ProjectID)
+		if err != nil {
 			continue
 		}
 		status, err := taskState(root, opts.logDir, record.ProjectID, record.Directory, id)
@@ -377,7 +381,7 @@ func listQueue(opts peerOptions) ([]queueItem, error) {
 		items = append(items, queueItem{
 			TaskID: id, ProjectID: record.ProjectID, Directory: record.Directory,
 			Status: status, Submitted: info.ModTime().UTC(), Summary: promptSummary(record.Prompt),
-			Prompt: record.Prompt, ThreadID: threadID,
+			Prompt: record.Prompt, ThreadID: threadID, Sandbox: string(mode),
 		})
 	}
 	sort.Slice(items, func(a, b int) bool {

@@ -367,7 +367,7 @@ internal sealed partial class ReviewWindow
                           $"   ·   {ShortId(row.Item.TaskId)}";
         detailPrompt.Text = row.Item.Prompt;
         SetFact(detailDirectory, row.Item.Directory);
-        SetFact(detailSandbox, "read-only");
+        SetFact(detailSandbox, row.Item.Sandbox == "workspace-write" ? "可写" : "只读");
         SetFact(detailAdapter, codexVersion is { Length: > 0 } version ? $"Codex {version}" : "Codex");
         SetFact(detailTaskId, ShortId(row.Item.TaskId));
         traceTitle.Text = $"task {ShortId(row.Item.TaskId)}";

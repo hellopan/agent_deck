@@ -249,7 +249,7 @@ func checkCodex(ctx context.Context, config codexOptions, logger *log.Logger) er
 // not a configuration error: the installed build is detected instead, because
 // making the user paste a path is the friction this project exists to remove.
 func (config codexOptions) resolve() (codexprobe.Config, string, error) {
-	directory, err := projects.Resolve(config.policy, config.projectID)
+	directory, mode, err := projects.ResolveMode(config.policy, config.projectID)
 	if err != nil {
 		return codexprobe.Config{}, "", fmt.Errorf("authorize project: %w", err)
 	}
@@ -267,7 +267,7 @@ func (config codexOptions) resolve() (codexprobe.Config, string, error) {
 		}
 		home = filepath.Join(userHome, ".codex")
 	}
-	return codexprobe.Config{Executable: executable, ProjectDir: directory, CodexHome: home}, source, nil
+	return codexprobe.Config{Executable: executable, ProjectDir: directory, CodexHome: home, Sandbox: string(mode)}, source, nil
 }
 
 // findCodex returns the executable and the name of the source it came from.
