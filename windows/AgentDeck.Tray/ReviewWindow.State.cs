@@ -232,6 +232,13 @@ internal sealed partial class ReviewWindow
         stack.Controls.Add(empty);
         empty.BringToFront();
         DeckTheme.Row(body, stack, 100, fill: true);
+        // A flow panel never stretches its children, so the rows have to be told
+        // the card's width or the pill and the revoke link end up packed against
+        // the fingerprint instead of sitting on the right edge. Layout, not just
+        // SizeChanged: the page is laid out while hidden, and a hidden control
+        // can reach its final width without ever raising a size change.
+        pairedList.SizeChanged += (_, _) => ResizePairedRows();
+        pairedList.Layout += (_, _) => ResizePairedRows();
 
         pair = DeckTheme.Button("显示配对二维码");
         pair.Margin = Padding.Empty;
@@ -359,32 +366,72 @@ internal sealed partial class ReviewWindow
             var row = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-                ColumnCount = 2, RowCount = 2, Height = 56, Padding = new Padding(2, 10, 2, 8)
+                ColumnCount = 3, RowCount = 2, Height = 58, Padding = new Padding(2, 9, 2, 9)
             };
             row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             row.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
             row.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
             var who = DeckTheme.Label(ShortFingerprint(phone.Fingerprint), DeckTheme.Monospace, DeckTheme.Ink);
             row.Controls.Add(who, 0, 0);
-            var live = DeckTheme.Label("已信任", DeckTheme.Small, DeckTheme.Good);
-            live.AutoSize = true;
-            live.Dock = DockStyle.None;
+            var live = DeckTheme.Chip("已信任", DeckTheme.Good);
             live.Anchor = AnchorStyles.Right;
+            live.Margin = new Padding(12, 1, 0, 0);
             row.Controls.Add(live, 1, 0);
-            var when = DeckTheme.Label($"配对于 {phone.At:MM-dd HH:mm}", DeckTheme.Small, DeckTheme.Dim);
+            // The trust file is the whole authorization, so removing it is the
+            // revocation: the Agent refuses this phone on its next request.
+            var fingerprint = phone.Fingerprint;
+            var revoke = DeckTheme.Link("撤销", DeckTheme.Dim, DeckTheme.Danger);
+            revoke.Anchor = AnchorStyles.Right;
+            revoke.Margin = new Padding(4, 1, 0, 0);
+            revoke.AccessibleName = $"撤销手机 {ShortFingerprint(fingerprint)}";
+            revoke.Click += async (_, _) => await RunActionAsync(() => RevokePhoneAsync(fingerprint));
+            row.Controls.Add(revoke, 2, 0);
+            var meta = $"配对于 {phone.At:MM-dd HH:mm}" +
+                       (phone.Expires is { } expires ? $" · 到期 {expires:yyyy-MM}" : "");
+            var when = DeckTheme.Label(meta, DeckTheme.Tiny, DeckTheme.Dim);
+            when.AutoEllipsis = true;
+            row.SetColumnSpan(when, 3);
             row.Controls.Add(when, 0, 1);
-            var expiry = DeckTheme.Label(
-                phone.Expires is { } expires ? $"证书到期 {expires:MM-dd}" : "", DeckTheme.Tiny, DeckTheme.Dim);
-            expiry.AutoSize = true;
-            expiry.Dock = DockStyle.None;
-            expiry.Anchor = AnchorStyles.Right;
-            row.Controls.Add(expiry, 1, 1);
             pairedList.Controls.Add(row);
-            var line = new Panel { BackColor = DeckTheme.Line2, Height = 1, Margin = Padding.Empty };
+            var line = new Panel { BackColor = DeckTheme.Hairline, Height = 1, Margin = Padding.Empty };
             pairedList.Controls.Add(line);
         }
         pairedList.ResumeLayout();
+        ResizePairedRows();
+    }
+
+    // The rows carry their own table because two columns of text and a link do
+    // not line up in a flow layout. Width has to be pushed in by hand, and only
+    // when it differs: the guard is what keeps the Layout handler from looping.
+    private void ResizePairedRows()
+    {
+        int width = pairedList.ClientSize.Width - 1;
+        if (width <= 0) return;
+        foreach (Control control in pairedList.Controls)
+        {
+            if (control.Width != width) control.Width = width;
+        }
+    }
+
+    // Revoking is a delete in the trust folder, so it works even while the Agent
+    // is stopped: the Agent re-reads that folder on every tunnel request, which
+    // is also why the phone loses access on its next poll rather than after a
+    // restart.
+    private async Task RevokePhoneAsync(string fingerprint)
+    {
+        var device = DeviceIdText();
+        if (device.Length == 0) throw new InvalidOperationException("本机还没有注册到 Relay。");
+        var answer = MessageBox.Show(this,
+            $"撤销后，这台手机需要重新配对才能连接。\n\n手机指纹 {ShortFingerprint(fingerprint)}",
+            "撤销手机配对", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.Yes) return;
+        await RunAsync("pair-revoke", "-pairing-dir", PairingDirectory, "-device", device,
+            "-fingerprint", fingerprint);
+        RecordEvent("已撤销手机配对");
+        RefreshStatePage();
+        SetStatus("已撤销手机配对，该手机需要重新扫码。");
     }
 
     private void RefreshEvents()

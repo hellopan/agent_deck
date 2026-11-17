@@ -46,7 +46,7 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
-	const usage = "usage: agentdeck-lab {init|relay|enroll|agent|pair-invite|pair-confirm|probe|projects|queue|submit|task-receipt|approvals|approve|inbox|cancel-task|remote-cancel|task-log|service|codex-check|detect} [options]"
+	const usage = "usage: agentdeck-lab {init|relay|enroll|agent|pair-invite|pair-confirm|pair-revoke|probe|projects|queue|submit|task-receipt|approvals|approve|inbox|cancel-task|remote-cancel|task-log|service|codex-check|detect} [options]"
 	if len(args) == 0 {
 		return errors.New(usage)
 	}
@@ -140,13 +140,16 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		return pairingInvite(*host, *folder, *device, os.Stdout)
-	case "pair-confirm", "pair-candidate":
+	case "pair-confirm", "pair-candidate", "pair-revoke":
 		folder := options.String("pairing-dir", "", "private pairing directory")
 		code := options.String("code", "", "offer code")
 		fingerprint := options.String("fingerprint", "", "phone certificate SHA-256")
 		device := options.String("device", "a", "device ID")
 		if err := parseFlags(options, args[1:]); err != nil {
 			return err
+		}
+		if mode == "pair-revoke" {
+			return revokePairing(*folder, *device, *fingerprint)
 		}
 		if mode == "pair-candidate" {
 			root, _, cert, err := pairingCandidate(*folder, *device, *code)

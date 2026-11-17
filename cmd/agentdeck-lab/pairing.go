@@ -120,6 +120,26 @@ func confirmPairing(folder, device, code, fingerprint string) error {
 	return nil
 }
 
+// revokePairing deletes one trusted phone. The Agent re-reads the trust folder
+// on every tunnel, so the phone's next request is refused and no process has to
+// be restarted. Removing the file is the whole revocation: nothing else records
+// that the phone was ever allowed.
+func revokePairing(folder, device, fingerprint string) error {
+	if !filepath.IsAbs(folder) || !validDevice(device) || !validPairingFingerprint(fingerprint) {
+		return errors.New("invalid pairing revocation")
+	}
+	root, err := os.OpenRoot(folder)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	err = root.Remove("trusted-" + device + "-" + fingerprint + ".local.json")
+	if errors.Is(err, os.ErrNotExist) {
+		return errors.New("that phone is not paired")
+	}
+	return err
+}
+
 func pairingCandidate(folder, device, code string) (*os.Root, []byte, *x509.Certificate, error) {
 	if !filepath.IsAbs(folder) || !validDevice(device) || !validPairingFingerprint(code) {
 		return nil, nil, nil, errors.New("invalid pairing confirmation")

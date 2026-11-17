@@ -211,6 +211,39 @@ internal static class DeckTheme
         BackColor = background ?? Canvas
     };
 
+    // A text button for secondary, in-row actions. A filled button per row would
+    // outweigh the row it belongs to, but a bare Label cannot be focused or
+    // reached with the keyboard, and this one destroys state.
+    internal static Button Link(string title, Color? color = null, Color? hover = null)
+    {
+        var button = new Button
+        {
+            Text = title,
+            Font = ButtonFace,
+            ForeColor = color ?? Dim,
+            BackColor = Surface,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            MinimumSize = Size.Empty,
+            Margin = Padding.Empty,
+            Padding = new Padding(6, 0, 6, 0),
+            FlatStyle = FlatStyle.Flat,
+            UseVisualStyleBackColor = false,
+            Cursor = Cursors.Hand,
+            TextAlign = ContentAlignment.MiddleCenter,
+            TabStop = true
+        };
+        button.FlatAppearance.BorderSize = 0;
+        // Same colour as the card, so hover only changes the text, not the row.
+        button.FlatAppearance.MouseOverBackColor = Surface;
+        button.FlatAppearance.MouseDownBackColor = Surface;
+        var rest = color ?? Dim;
+        var over = hover ?? Danger;
+        button.MouseEnter += (_, _) => button.ForeColor = over;
+        button.MouseLeave += (_, _) => button.ForeColor = rest;
+        return button;
+    }
+
     internal static Control Input(TextBox field, string name)
     {
         field.BorderStyle = BorderStyle.None;
@@ -282,6 +315,8 @@ internal static class DeckTheme
             Margin = new Padding(8, 0, 0, 0),
             TextAlign = ContentAlignment.MiddleCenter
         };
+        // Square pills were the only hard corners left in the window.
+        Round(chip, 3);
         return chip;
     }
 

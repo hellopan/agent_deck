@@ -80,6 +80,21 @@ func TestPairingRequiresMatchingLocalConfirmation(t *testing.T) {
 	if err := submitPairing(folder, "a", invite.Code, cert); err == nil {
 		t.Fatal("offer could be reused")
 	}
+	// Revocation is the trust file going away. The wrong device must not be
+	// able to remove anything, and a second revoke has to report that the
+	// phone is gone instead of succeeding quietly.
+	if err := revokePairing(folder, "b", pairingFingerprint(cert)); err == nil {
+		t.Fatal("revocation applied to the wrong device")
+	}
+	if err := revokePairing(folder, "a", pairingFingerprint(cert)); err != nil {
+		t.Fatal(err)
+	}
+	if authorizedPhone(folder, "a", cert, legacy) {
+		t.Fatal("phone still trusted after revocation")
+	}
+	if err := revokePairing(folder, "a", pairingFingerprint(cert)); err == nil {
+		t.Fatal("revoked an already removed phone")
+	}
 }
 
 func inviteToken(t *testing.T) string {
