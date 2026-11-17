@@ -20,6 +20,9 @@ try {
         & $Go build -trimpath -o (Join-Path $directory $binary) ./cmd/agentdeck-lab
         if ($LASTEXITCODE -ne 0) { throw "Go build failed for $platform" }
         Copy-Item -LiteralPath 'docs/private-lab-deploy.md' -Destination (Join-Path $directory 'DEPLOY.md')
+        if ($platform -eq 'linux') {
+            Copy-Item -LiteralPath 'scripts/renew-relay.sh' -Destination $directory
+        }
         $archive = Join-Path $output "agentdeck-lab-$platform-amd64.zip"
         Compress-Archive -Path (Join-Path $directory '*') -DestinationPath $archive -Force
         Get-FileHash -LiteralPath $archive -Algorithm SHA256
