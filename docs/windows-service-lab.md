@@ -124,11 +124,21 @@ Agent 侧也可以直接列出同一份队列，用于托盘与排障：
 
 ### Windows 托盘实验界面
 
-解压 `agentdeck-tray-windows.zip`，安装相应架构的 .NET 10 Desktop Runtime 后运行 `AgentDeck.Tray.exe`。保留包内文件在同一目录。窗口内填写本机收件箱、项目授权清单、日志目录、Codex 可执行文件和配置目录。刷新后可查看任务队列、预览提示与状态、叫停任务。审批只在手机上完成，托盘不提供放行入口。「查看任务日志」可在窗口内读取所选任务日志末尾最多 256 KiB 的完整行。关闭窗口会隐藏到系统托盘，退出托盘不会停止单独运行的 Agent。
+解压 `agentdeck-tray-windows.zip`，安装相应架构的 .NET 10 Desktop Runtime 后运行 `AgentDeck.Tray.exe`。保留包内文件在同一目录。也可以直接运行单文件安装程序，它会把自身和 Agent 释放到 `%LOCALAPPDATA%\AgentDeck\app`。
 
-这版界面用当前 Windows 用户调用同目录的实验工具。点击「保存路径」后，下次启动会从 `%LOCALAPPDATA%\AgentDeck\tray-settings.json` 加载本机路径。
+窗口分三页，用左侧图标切换：
 
-「管理项目」编辑所填路径指向的本机授权清单。请与 Agent 的 `-projects` 使用同一文件。可以在已有的本机目录下指定一个新 JSON 文件，或打开现有清单。用目录选择器添加项目，填写唯一 ID，勾选「启用」并保存。新增项目默认停用。取消勾选或移除后，Agent 在后续项目查询、任务提交和日志读取时重新校验授权。运行中的实验任务每 500 毫秒及输出事件前复查授权。项目停用、移除或目录变更会请求取消 Codex App Server 进程，并在本机任务日志记录 `interrupted`。编辑器需要当前 Windows 用户对清单目录有写权限。
+| 页面 | 内容 |
+| --- | --- |
+| 状态 | 连接状态（已就绪 / 已停止 / 未注册）、已运行时长、设备 ID、注册时间、已配对手机、本机事件记录；「配置云服务器」与生成配对二维码的入口在这里 |
+| 任务 | 左侧按提交时间排列的队列（待处理 / 运行中 / 已完成），右侧预览请求内容、工作目录、沙箱、适配器与任务 ID，执行轨迹实时写入，可选择跟随或叫停 |
+| 设置 | 项目白名单、开机自启状态、编辑器检测结果、任务日志目录 |
+
+Codex、Cursor、WorkBuddy 的路径由托盘自动发现，不提供手动填写入口；识别到的 Codex 版本会传给 Agent，避免它再找到一个不带审批的副本。审批只在手机上完成，托盘不提供放行入口。关闭窗口会隐藏到系统托盘，退出托盘不会停止单独运行的 Agent。
+
+本机路径不写进界面。项目白名单默认是 `%LOCALAPPDATA%\AgentDeck\projects.local.json`，任务日志默认在 `%LOCALAPPDATA%\AgentDeck\logs`，需要改动时改 `%LOCALAPPDATA%\AgentDeck\tray-settings.json` 里的同名字段。
+
+「管理项目…」编辑的清单就是 Agent 用 `-projects` 读的同一个文件，默认 `%LOCALAPPDATA%\AgentDeck\projects.local.json`。用目录选择器添加项目，填写唯一 ID，勾选「启用」并保存。新增项目默认停用。取消勾选或移除后，Agent 在后续项目查询、任务提交和日志读取时重新校验授权。运行中的实验任务每 500 毫秒及输出事件前复查授权。项目停用、移除或目录变更会请求取消 Codex App Server 进程，并在本机任务日志记录 `interrupted`。编辑器需要当前 Windows 用户对清单目录有写权限。
 
 ## 在 Windows 测试机注册服务
 
