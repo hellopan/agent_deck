@@ -4,6 +4,7 @@ AgentDeck 是一个可直接安装到手机的原生 Android APK。它通过自�
 
 项目已进入原型阶段。首批电脑以 Windows 为目标，Relay 计划部署在已有的阿里云 Linux 实例上。
 
+- [使用说明：从装到用](docs/user-guide.md)
 - [首版范围、原型验证与验收清单](docs/mvp-acceptance.md)
 - [跨端协议与权限设计](docs/protocol-and-permissions.md)
 - [Android 与 Windows 界面流程](docs/client-flows.md)
