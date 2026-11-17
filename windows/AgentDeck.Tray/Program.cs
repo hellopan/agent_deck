@@ -164,13 +164,48 @@ internal sealed partial class ReviewWindow : Form
         }
         SetStatus("正在向 Relay 注册电脑…");
         Directory.CreateDirectory(DeviceDirectory);
-        var id = (await RunWithInputAsync(dialog.Token, "enroll", "-config", AgentConfig,
-            "-relay-url", dialog.Endpoint, "-fingerprint", dialog.Fingerprint)).Trim();
+        string id;
+        try
+        {
+            id = (await RunWithInputAsync(dialog.Token, "enroll", "-config", AgentConfig,
+                "-relay-url", dialog.Endpoint, "-fingerprint", dialog.Fingerprint)).Trim();
+        }
+        catch (Exception error)
+        {
+            // The status line flashes and fades. Enrollment failures need a fix
+            // on the server, so keep the reason where past events stay readable.
+            RecordEvent(ExplainEnrollmentFailure(error.Message));
+            RefreshEvents();
+            throw;
+        }
         File.WriteAllText(Path.Combine(DeviceDirectory, "registered-device"), id);
         StartAgent(id);
         RecordEvent("电脑已注册到 Relay");
         SetStatus("电脑已注册，正在连接 Relay。");
         UpdateConnection();
+    }
+
+    private static string ExplainEnrollmentFailure(string message)
+    {
+        // The Agent reports these in English with the values attached; say what
+        // to do next in the language the rest of the window uses.
+        if (message.Contains("fingerprint mismatch", StringComparison.Ordinal))
+            return "注册失败：指纹与服务器证书不符，按 relay-fingerprint 的输出重新填";
+        if (message.Contains("does not cover", StringComparison.Ordinal))
+            return "注册失败：证书里没有你填的地址，改成证书上的那个名字";
+        if (message.Contains("expired at", StringComparison.Ordinal))
+            return "注册失败：服务器证书已过期，需要在云机重新 relay-init";
+        if (message.Contains("not valid until", StringComparison.Ordinal))
+            return "注册失败：服务器时钟超前，证书尚未生效";
+        if (message.Contains("pinned to another Relay certificate", StringComparison.Ordinal))
+            return "注册失败：本机还钉着旧证书，先重置本机身份";
+        if (message.Contains("belongs to another Relay", StringComparison.Ordinal))
+            return "注册失败：本机配置指向另一个 Relay，先重置本机身份";
+        if (message.Contains("HTTP 401", StringComparison.Ordinal))
+            return "注册失败：注册令牌不对";
+        if (message.Contains("HTTP 409", StringComparison.Ordinal))
+            return "注册失败：这台设备已用另一组密钥注册过";
+        return "注册失败：" + message;
     }
 
     private void StartAgent(string id)

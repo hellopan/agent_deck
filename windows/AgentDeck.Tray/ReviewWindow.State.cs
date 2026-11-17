@@ -442,7 +442,9 @@ internal sealed partial class ReviewWindow
 
     private void RefreshEvents()
     {
-        var signature = string.Join("|", connectionEvents.Take(4));
+        // Width participates in the signature: wrapping depends on it, and the
+        // first pass runs before the card has its final size.
+        var signature = $"{eventList.ClientSize.Width}|{string.Join("|", connectionEvents.Take(4))}";
         if (signature == eventSignature) return;
         eventSignature = signature;
         eventList.SuspendLayout();
@@ -458,6 +460,9 @@ internal sealed partial class ReviewWindow
         {
             var entry = DeckTheme.Label(line, DeckTheme.MonoSmall, DeckTheme.Dim);
             entry.AutoSize = true;
+            // Enrollment failures carry server answers that are longer than this
+            // column, so wrap instead of clipping the half that explains why.
+            entry.MaximumSize = new Size(Math.Max(120, eventList.ClientSize.Width - 2), 0);
             entry.Margin = new Padding(0, 0, 0, 6);
             eventList.Controls.Add(entry);
         }

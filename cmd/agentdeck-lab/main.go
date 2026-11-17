@@ -104,7 +104,10 @@ func run(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		id, err := enrollAgent(ctx, *path, *endpoint, strings.TrimSpace(token), *fingerprint)
+		// Accept what the operator pasted: hex from an SSH session often carries
+		// stray whitespace or upper case, and both are the same SHA-256 value.
+		id, err := enrollAgent(ctx, *path, strings.TrimSpace(*endpoint),
+			strings.ToLower(strings.TrimSpace(token)), strings.ToLower(strings.TrimSpace(*fingerprint)))
 		if err == nil {
 			_, err = fmt.Fprintln(os.Stdout, id)
 		}

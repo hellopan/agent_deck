@@ -58,6 +58,23 @@ func validDevice(id string) bool {
 	return len(id) == 32 && err == nil && strings.ToLower(id) == id
 }
 
+// certificateNames lists the identities a certificate can vouch for, so a host
+// mismatch can be reported with both sides instead of a bare "does not match".
+func certificateNames(cert *x509.Certificate) string {
+	names := append([]string(nil), cert.DNSNames...)
+	for _, ip := range cert.IPAddresses {
+		names = append(names, ip.String())
+	}
+	switch len(names) {
+	case 0:
+		return "no subject alternative name"
+	case 1:
+		return names[0]
+	default:
+		return strings.Join(names, ", ")
+	}
+}
+
 func enrollmentStorage(directory string, routes map[string]transport.Route) (func(string, transport.Route) error, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
@@ -159,12 +176,26 @@ func enrollAgent(ctx context.Context, path, rawURL, token, fingerprint string) (
 			MinVersion: tls.VersionTLS13, InsecureSkipVerify: true, // Verify against the owner's explicit pin.
 			VerifyConnection: func(state tls.ConnectionState) error {
 				if len(state.PeerCertificates) == 0 {
-					return errors.New("Relay certificate unavailable")
+					return errors.New("relay certificate unavailable")
 				}
 				cert := state.PeerCertificates[0]
-				if subtle.ConstantTimeCompare([]byte(pairingFingerprint(cert)), []byte(fingerprint)) != 1 ||
-					cert.VerifyHostname(address.Hostname()) != nil || time.Now().Before(cert.NotBefore) || time.Now().After(cert.NotAfter) {
-					return errors.New("Relay certificate does not match the configured host and fingerprint")
+				// Report the three failure modes separately: they need different
+				// fixes, and a single "does not match" leaves the operator guessing.
+				if actual := pairingFingerprint(cert); subtle.ConstantTimeCompare([]byte(actual), []byte(fingerprint)) != 1 {
+					return fmt.Errorf("relay certificate fingerprint mismatch: server sent %s, configured %s", actual, fingerprint)
+				}
+				if cert.VerifyHostname(address.Hostname()) != nil {
+					return fmt.Errorf("relay certificate names %s, which does not cover %q",
+						certificateNames(cert), address.Hostname())
+				}
+				now := time.Now()
+				if now.Before(cert.NotBefore) {
+					return fmt.Errorf("relay certificate is not valid until %s, check the server clock",
+						cert.NotBefore.UTC().Format(time.RFC3339))
+				}
+				if now.After(cert.NotAfter) {
+					return fmt.Errorf("relay certificate expired at %s, re-run relay-init on the server",
+						cert.NotAfter.UTC().Format(time.RFC3339))
 				}
 				if newDevice {
 					config.RelayCertificate = string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: cert.Raw}))

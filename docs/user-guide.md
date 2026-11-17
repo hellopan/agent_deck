@@ -122,6 +122,8 @@ systemctl status agentdeck-relay --no-pager
 - **已停止** — 进程退出了，重启托盘再检查 Codex 是否可用。
 - **未注册** — 还没有 Relay 身份，配置云服务器后手机才能连。
 
+注册成功或失败都会记进状态页的「最近连接事件」，最新一条在最上面，失败原因会写明是哪里对不上。底部的单行状态只是即时提示，会淡出。
+
 ## 3. 配项目（决定手机能碰什么）
 
 手机看不到电脑上的目录，只能操作你在这里授权的项目。所以先配白名单，再做别的。
@@ -190,6 +192,10 @@ systemctl status agentdeck-relay --no-pager
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | 状态页一直「未注册」 | 地址 / 指纹 / 令牌填错，或 8443 不通 | 先在云机 `curl -k https://127.0.0.1:8443` 看端口；再核对安全组和防火墙；指纹必须与 `relay-fingerprint` 完全一致 |
+| 注册报 `fingerprint mismatch: server sent …, configured …` | 填的指纹不是这台 Relay 现在用的那份 | 用报错里 `server sent` 那串；重新生成过 Relay 就一定换了指纹 |
+| 注册报 `names …, which does not cover "…"` | 填的地址和证书里的名字不是同一个 | 改成报错里 `names` 后面的那个名字，或在云机按新地址重新 `relay-init` |
+| 注册报 `expired at …` | 七天有效期到了 | 云机重新 `relay-init`，然后电脑和手机全部重配 |
+| 注册报 `existing device …`（`pinned` / `another Relay`） | 本机还留着旧身份 | 退出托盘，删 `%LOCALAPPDATA%\AgentDeck` 下 `agent.local.json`、`registered-device`、`pairing\`，再重新配置 |
 | 手机连不上，电脑显示已就绪 | 手机填的地址和电脑不同，或手机没网 | 手机连接页看延迟；确认手机能打开 `https://云机地址:8443` |
 | 配对扫完没反应 | 超过两分钟，或已有别的配对请求 | 重新点「显示配对二维码」，一次只配一台 |
 | 手机看不到项目 | 项目未启用 | 设置页把「启用」打开，手机下拉刷新 |
