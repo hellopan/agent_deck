@@ -53,6 +53,9 @@ coverage/
 *.db-*
 *.log
 
+# 设计参考素材（竞品截图等第三方内容，不入库）
+/_assets/
+
 # IDE / OS
 .idea/
 *.iml
