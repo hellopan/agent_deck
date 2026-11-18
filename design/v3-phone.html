@@ -1,0 +1,535 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentDeck 手机端 · 改版</title>
+<style>
+:root{
+  --bg:#f7f4ef; --card:#fff; --line:#e9e3da; --line2:#f1ece5;
+  --ink:#1b1f24; --ink2:#5f6058; --ink3:#9c9a92;
+  --act:#1b1f24; --act-h:#2b3138; --on-act:#fff; --warm:#a16207;
+  --green:#15803d; --green-bg:#ecf7ef; --green-line:#cfe8d8;
+  --red:#b42318; --red-bg:#fdeceb; --red-line:#f6d3d0; --on-red:#fff;
+  --amber:#a16207; --amber-bg:#fdf7e6; --amber-line:#f0e2bd;
+  --desk:#ebe7e0; --phone-line:#d9d3ca; --phone-shadow:0 10px 28px rgba(40,35,28,.10),0 1px 2px rgba(40,35,28,.06);
+  --seg-on:#f2efe9; --tag-done:#f2f0eb; --off-bar:#cfcabf;
+  --ev-dot:#c9c4ba; --ev-file:#c99a3f; --ev-msg:#9aa0a6; --ev-line:#e4ded3;
+  --code-bg:#f6f3ee; --pv-bg:#f8f7f4;
+  --dock-fade:rgba(247,244,239,0); --dock-shadow:0 2px 8px rgba(40,35,28,.04);
+  --tabbar:#fbf9f6; --indicator:#c9c4ba; --badge-ring:#fbf9f6;
+  --soft:#f4f2ee; --ready-off:#e6e0d7; --dot-off:#c2beb5;
+  --fab:#fff; --fab-line:#d9d3ca;
+  --mono:ui-monospace,"Cascadia Mono","Consolas","SF Mono",monospace;
+}
+:root.dark{
+  --bg:#161513; --card:#1e1c19; --line:#2f2c27; --line2:#262420;
+  --ink:#e8e5df; --ink2:#a8a49b; --ink3:#767268;
+  --act:#e8e5df; --act-h:#f6f3ec; --on-act:#161513; --warm:#d9a23c;
+  --green:#3fb950; --green-bg:#13261a; --green-line:#1f4a2c;
+  --red:#f85149; --red-bg:#2a1614; --red-line:#52241f; --on-red:#161513;
+  --amber:#d9a23c; --amber-bg:#2a2113; --amber-line:#453520;
+  --desk:#0a0b0c; --phone-line:#33383d; --phone-shadow:0 10px 28px rgba(0,0,0,.55),0 1px 2px rgba(0,0,0,.4);
+  --seg-on:#2a2724; --tag-done:#23272b; --off-bar:#3a3f45;
+  --ev-dot:#4a5158; --ev-file:#d9a23c; --ev-msg:#7c848c; --ev-line:#443e36;
+  --code-bg:#101210; --pv-bg:#1f2225;
+  --dock-fade:rgba(22,21,19,0); --dock-shadow:0 2px 8px rgba(0,0,0,.3);
+  --tabbar:#131211; --indicator:#4a5158; --badge-ring:#131211;
+  --soft:#23272b; --ready-off:#2a2724; --dot-off:#555b62;
+  --fab:#1e1c19; --fab-line:#33383d;
+}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{
+  background:var(--desk); padding:36px 24px 60px;
+  font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+  color:var(--ink); -webkit-font-smoothing:antialiased;
+}
+.wall{display:grid;grid-template-columns:repeat(3,393px);gap:40px 32px;justify-content:center}
+figure{margin:0}
+figcaption{margin-top:12px;font-size:12px;color:var(--ink3);text-align:center;letter-spacing:.2px}
+figcaption b{font-weight:500;color:var(--ink)}
+.phone{
+  width:393px;height:852px;border-radius:34px;background:var(--bg);
+  border:1px solid var(--phone-line);overflow:hidden;position:relative;
+  box-shadow:var(--phone-shadow);
+  display:flex;flex-direction:column;
+}
+/* status bar */
+.statusbar{height:44px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 22px 0 26px;font-size:12px;font-weight:500;color:var(--ink)}
+.sb-r{display:flex;align-items:center;gap:5px;color:var(--ink)}
+/* app bar */
+.appbar{flex:none;padding:2px 18px 10px;display:flex;align-items:flex-start;gap:10px}
+.ab-main{flex:1;min-width:0}
+.ab-title{font-size:17px;font-weight:600;letter-spacing:.1px;display:flex;align-items:center;gap:6px}
+.ab-sub{font-size:12.5px;color:var(--ink3);margin-top:2px;display:flex;align-items:center;gap:6px}
+.ab-act{flex:none;display:flex;align-items:center;gap:14px;padding-top:3px;color:var(--ink2)}
+.chev{color:var(--ink3)}
+.back{width:26px;height:26px;display:grid;place-items:center;margin-left:-6px;color:var(--ink);flex:none}
+.body{flex:1;min-height:0;overflow:hidden;padding:0 16px}
+h1.page{font-size:19px;font-weight:600;margin:2px 0 2px;letter-spacing:.2px}
+.page-sub{font-size:12.5px;color:var(--ink3);margin-bottom:12px}
+/* blocks */
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin-bottom:10px}
+.card.flat{padding:0;overflow:hidden}
+.seg{display:flex;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px;margin:2px 0 12px}
+.seg div{flex:1;text-align:center;padding:7px 0;font-size:13px;color:var(--ink2);border-radius:11px}
+.seg div.on{background:var(--seg-on);color:var(--ink);font-weight:500}
+.seg b{font-family:var(--mono);font-weight:500;font-size:13px}
+.grp{font-size:12px;color:var(--ink3);margin:14px 2px 8px;display:flex;align-items:center;gap:6px}
+/* approval card */
+.ap{position:relative;padding-left:16px}
+.ap::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:2px;background:var(--red)}
+.ap.off::before{background:var(--off-bar)}
+.card.run{position:relative;padding-left:16px}
+.card.run::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:2px;background:var(--green)}
+.ap-top{display:flex;align-items:center;gap:7px;font-size:12px;color:var(--ink3)}
+.ap-top .rt{margin-left:auto;font-family:var(--mono);font-size:11.5px}
+.tag{display:inline-flex;align-items:center;height:20px;padding:0 6px;border-radius:6px;font-size:11px;font-weight:500;letter-spacing:.2px}
+.tag.cmd{background:var(--red-bg);color:var(--red);border:1px solid var(--red-line)}
+.tag.file{background:var(--amber-bg);color:var(--amber);border:1px solid var(--amber-line)}
+.tag.run{background:var(--green-bg);color:var(--green);border:1px solid var(--green-line)}
+.tag.done{background:var(--tag-done);color:var(--ink2);border:1px solid var(--line)}
+.ap-cmd{font-size:14.5px;margin:7px 0 6px;word-break:break-all;line-height:1.45;font-weight:500}
+.ap-cmd.mono{font-family:var(--mono);font-size:13.5px;font-weight:400}
+.ap-cmd .p{font-family:var(--mono);font-size:13.5px}
+.ap-cmd .d{color:var(--ink2);font-size:13px;font-weight:400}
+.mono{font-family:var(--mono)}
+.ap-meta{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink3)}
+.ap-meta .r{margin-left:auto;color:var(--red);font-weight:500}
+/* running */
+.run-title{font-size:14.5px;font-weight:500;line-height:1.45;margin:6px 0 8px}
+.run-foot{display:flex;align-items:center;font-size:12px;color:var(--ink3)}
+.run-foot .r{margin-left:auto;display:flex;align-items:center;gap:10px}
+.link{color:var(--warm);font-size:12.5px;text-decoration:none}
+.link.danger{color:var(--red)}
+.more{font-size:12px;color:var(--ink3);text-align:center;padding:12px 0 4px}
+/* dock */
+.dock{flex:none;padding:8px 16px 6px;background:linear-gradient(to bottom,var(--dock-fade),var(--bg) 22%)}
+.dock-box{display:flex;align-items:flex-end;gap:8px;background:var(--card);border:1px solid var(--line);border-radius:16px;padding:8px 8px 8px 14px;box-shadow:var(--dock-shadow)}
+.dock-box .ph{flex:1;font-size:14px;color:var(--ink3);padding:6px 0;min-height:32px}
+.send{width:34px;height:34px;border-radius:50%;background:var(--act);display:grid;place-items:center;flex:none;color:var(--on-act)}
+.dock-hint{font-size:11px;color:var(--ink3);text-align:center;padding:7px 0 0}
+/* tabbar */
+.tabbar{flex:none;height:60px;display:flex;align-items:flex-start;padding-top:8px;border-top:1px solid var(--line);background:var(--tabbar)}
+.tb{flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;font-size:11px;color:var(--ink3);position:relative}
+.tb.on{color:var(--act);font-weight:600}
+.tb .badge{position:absolute;top:-3px;left:calc(50% + 8px);box-shadow:0 0 0 1.5px var(--badge-ring);min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--red);color:var(--on-red);font:500 10px/16px var(--mono);text-align:center}
+.home-ind{flex:none;height:18px;display:grid;place-items:center;background:var(--tabbar)}
+.home-ind i{width:134px;height:4px;border-radius:2px;background:var(--indicator);display:block}
+/* detail */
+.cmdblock{background:var(--code-bg);border:1px solid var(--line2);border-radius:12px;padding:12px;font-family:var(--mono);font-size:13.5px;line-height:1.55;word-break:break-all;margin:10px 0 4px}
+.kv{display:flex;gap:10px;padding:9px 0;border-bottom:1px solid var(--line2);font-size:13px}
+.kv:last-child{border-bottom:0}
+.kv .k{width:84px;flex:none;color:var(--ink3);font-size:12.5px}
+.kv .v{flex:1;min-width:0}
+.kv .v.mono{font-family:var(--mono);font-size:12.5px}
+.note{display:flex;gap:8px;font-size:12px;color:var(--ink3);line-height:1.55;padding:10px 2px}
+.note b{font-weight:500;color:var(--ink2)}
+.btn{height:48px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:500;width:100%;border:1px solid transparent}
+.btn.primary{background:var(--act);color:var(--on-act);box-shadow:0 1px 2px rgba(20,24,28,.20)}
+.btn.primary:active{background:var(--act-h)}
+.btn.ghost{background:var(--card);border-color:var(--line);color:var(--ink)}
+.btn.sm{height:36px;font-size:13px;width:auto;padding:0 14px;border-radius:10px}
+.btn-row{display:flex;gap:10px;margin:14px 0 6px}
+/* events */
+.ev{position:relative;padding:0 0 14px 22px;font-size:13px;line-height:1.5}
+.ev::before{content:"";position:absolute;left:5px;top:6px;width:7px;height:7px;border-radius:50%;background:var(--ev-dot);border:1.5px solid var(--bg)}
+.ev::after{content:"";position:absolute;left:8px;top:15px;bottom:-6px;width:1px;background:var(--ev-line)}
+.ev:last-child::after{display:none}
+.ev .t{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-right:6px}
+.ev.cmd::before{background:var(--red)}
+.ev.file::before{background:var(--ev-file)}
+.ev.msg::before{background:var(--ev-msg)}
+.ev.ok::before{background:var(--green)}
+.ev .c{font-family:var(--mono);font-size:12.5px;background:var(--code-bg);border-radius:6px;padding:5px 8px;margin-top:5px;display:block;word-break:break-all}
+.trace{display:flex;flex-direction:column}
+.stream{margin-top:auto}
+.pv{display:flex;align-items:center;gap:10px;background:var(--pv-bg);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:2px 0 12px}
+.pv .ic{width:30px;height:30px;border-radius:9px;background:var(--card);display:grid;place-items:center;color:var(--green);flex:none}
+.pv .tt{font-size:13px;font-weight:500}
+.pv .ss{font-size:11.5px;color:var(--ink3);font-family:var(--mono)}
+.pv .go{margin-left:auto}
+/* device */
+.dev{display:flex;align-items:flex-start;gap:10px}
+.dev .nm{font-size:15.5px;font-weight:600}
+.dev .meta{font-size:11.5px;color:var(--ink3);margin-top:3px}
+.dev .r{margin-left:auto;flex:none}
+.dot{width:6px;height:6px;border-radius:50%;display:inline-block;background:var(--green);vertical-align:1px}
+.dot.off{background:var(--dot-off)}
+.dot.amber{background:var(--ev-file)}
+.pill{display:inline-flex;align-items:center;gap:5px;height:22px;padding:0 8px;border-radius:7px;font-size:11.5px;border:1px solid var(--line);color:var(--ink2);background:var(--card)}
+.pill.ok{color:var(--green);background:var(--green-bg);border-color:var(--green-line)}
+.pill.off{color:var(--ink3);background:var(--soft)}
+.pill.warn{color:var(--amber);background:var(--amber-bg);border-color:var(--amber-line)}
+.readiness{display:flex;gap:6px;margin-top:12px}
+.readiness i{height:4px;border-radius:2px;background:var(--green-line);flex:1}
+.readiness i.on{background:var(--green)}
+.readiness i.off{background:var(--ready-off)}
+.proj-row{display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid var(--line2);font-size:13.5px}
+.proj-row:last-child{border-bottom:0}
+.proj-row .p{font-family:var(--mono);font-size:11px;color:var(--ink3);margin-top:2px}
+.proj-row .r{margin-left:auto}
+.eng{display:flex;align-items:center;gap:9px;padding:10px 0;border-bottom:1px solid var(--line2);font-size:13px}
+.eng:last-child{border-bottom:0}
+.eng .v{margin-left:auto;font-family:var(--mono);font-size:11.5px;color:var(--ink3)}
+.sec-title{font-size:12px;color:var(--ink3);margin:16px 2px 8px}
+body.only .wall{grid-template-columns:393px;padding-top:0}
+body.only{background:var(--bg);padding:20px}
+body.only figcaption{display:none}
+.theme-fab{position:fixed;top:16px;right:18px;width:34px;height:34px;border-radius:50%;border:1px solid var(--fab-line);background:var(--fab);color:var(--ink2);display:grid;place-items:center;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.10);z-index:9}
+.theme-fab:hover{color:var(--ink)}
+body.only .theme-fab{display:none}
+html.dark .i-sun{display:none}
+html:not(.dark) .i-moon{display:none}
+</style>
+<script>
+(function(){
+  var q = new URLSearchParams(location.search).get('theme');
+  var sv = null; try { sv = localStorage.getItem('ad-theme'); } catch(e){}
+  var dark = q ? q === 'dark' : (sv ? sv === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches);
+  if (dark) document.documentElement.classList.add('dark');
+})();
+</script>
+</head>
+<body>
+<button class="theme-fab" title="切换深浅色（样稿用）" onclick="(function(){var d=document.documentElement.classList.toggle('dark');try{localStorage.setItem('ad-theme',d?'dark':'light')}catch(e){}})()">
+  <svg class="i-moon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg>
+  <svg class="i-sun" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="8" cy="8" r="3"/><path d="M8 1v1.6M8 13.4V15M1 8h1.6M13.4 8H15M3.1 3.1l1.1 1.1M11.8 11.8l1.1 1.1M12.9 3.1l-1.1 1.1M4.2 11.8l-1.1 1.1"/></svg>
+</button>
+<div class="wall">
+
+<!-- 1 任务 -->
+<figure id="f1">
+<div class="phone">
+  <div class="statusbar"><span>20:21</span><span class="sb-r">
+    <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4" y="5" width="3" height="6" rx="1"/><rect x="8" y="3" width="3" height="8" rx="1"/><rect x="12" y="0" width="3" height="11" rx="1"/></svg>
+    <svg width="14" height="11" viewBox="0 0 14 11" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1 4.2a8.5 8.5 0 0 1 12 0M3.4 6.6a5.2 5.2 0 0 1 7.2 0"/><circle cx="7" cy="9.4" r="1" fill="currentColor" stroke="none"/></svg>
+    <svg width="22" height="11" viewBox="0 0 22 11" fill="none"><rect x="0.5" y="0.5" width="18" height="10" rx="3" stroke="currentColor"/><rect x="2" y="2" width="13" height="7" rx="1.6" fill="currentColor"/><path d="M20 4v3" stroke="currentColor" stroke-width="1.6"/></svg>
+  </span></div>
+  <div class="appbar">
+    <div class="ab-main">
+      <div class="ab-title">DESKTOP-8F2A · web-app
+        <svg class="chev" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 4.5 6 8l3-3.5"/></svg>
+      </div>
+      <div class="ab-sub"><span class="dot"></span>已连接 · 28ms · 2 个待审批</div>
+    </div>
+    <div class="ab-act">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 5h14M3 10h14M3 15h9"/></svg>
+    </div>
+  </div>
+  <div class="body">
+    <div class="seg"><div class="on"><b>2</b> 待处理</div><div><b>1</b> 运行中</div><div><b>3</b> 已完成</div></div>
+
+    <div class="card ap">
+      <div class="ap-top"><span class="tag cmd">命令</span> web-app<span class="rt">3:58</span></div>
+      <div class="ap-cmd mono">rm -rf dist/ &amp;&amp; pnpm build</div>
+      <div class="ap-meta">Codex · D:\work\web-app<span class="r">待批准</span></div>
+    </div>
+
+    <div class="card ap">
+      <div class="ap-top"><span class="tag file">写文件</span> web-app<span class="rt">4:12</span></div>
+      <div class="ap-cmd"><span class="p">test/rate-limit.spec.ts</span> <span class="d">· 追加 12 行</span></div>
+      <div class="ap-meta">Codex · D:\work\web-app<span class="r">待批准</span></div>
+    </div>
+
+    <div class="card run">
+      <div class="ap-top"><span class="tag run">运行中</span> web-app<span class="rt">02:14</span></div>
+      <div class="run-title">把登录页校验抽成 useAuth</div>
+      <div class="run-foot">Codex · 3 个文件已改<span class="r"><a class="link">查看轨迹</a></span></div>
+    </div>
+
+    <div class="more">今天已完成 3 条 · 点按查看</div>
+  </div>
+  <div class="dock">
+    <div class="dock-box">
+      <div class="ph">描述你要做的改动</div>
+      <div class="send"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 12.5V3.5M4 7l4-4 4 4"/></svg></div>
+    </div>
+    <div class="dock-hint">提交后带 requestId，断线重试不会重复执行</div>
+  </div>
+  <nav class="tabbar">
+    <div class="tb on"><svg width="21" height="21" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.5 5.5h15v9.5h-9l-4 3v-3h-2z"/></svg>任务</div>
+    <div class="tb"><svg width="21" height="21" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="16" height="11" rx="1.6"/><path d="M8 18.5h6M11 15v3.5"/></svg>设备</div>
+    <div class="tb"><span class="badge">2</span><svg width="21" height="21" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 3l7 2.6v5c0 4-3 7-7 8.4-4-1.4-7-4.4-7-8.4v-5z"/><path d="M8 11l2.2 2.2L14.4 9"/></svg>审批</div>
+  </nav>
+  <div class="home-ind"><i></i></div>
+</div>
+<figcaption><b>1 · 任务</b>　待审批置顶，输入条常驻</figcaption>
+</figure>
+
+<!-- 2 审批列表 -->
+<figure id="f2">
+<div class="phone">
+  <div class="statusbar"><span>20:21</span><span class="sb-r">
+    <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4" y="5" width="3" height="6" rx="1"/><rect x="8" y="3" width="3" height="8" rx="1"/><rect x="12" y="0" width="3" height="11" rx="1"/></svg>
+    <svg width="14" height="11" viewBox="0 0 14 11" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1 4.2a8.5 8.5 0 0 1 12 0M3.4 6.6a5.2 5.2 0 0 1 7.2 0"/><circle cx="7" cy="9.4" r="1" fill="currentColor" stroke="none"/></svg>
+    <svg width="22" height="11" viewBox="0 0 22 11" fill="none"><rect x="0.5" y="0.5" width="18" height="10" rx="3" stroke="currentColor"/><rect x="2" y="2" width="13" height="7" rx="1.6" fill="currentColor"/><path d="M20 4v3" stroke="currentColor" stroke-width="1.6"/></svg>
+  </span></div>
+  <div class="appbar">
+    <div class="ab-main">
+      <h1 class="page">审批</h1>
+      <div class="ab-sub">跨设备汇总 · 按提交时间排序</div>
+    </div>
+    <div class="ab-act"><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="9" cy="9" r="5.5"/><path d="M13 13l4 4"/></svg></div>
+  </div>
+  <div class="body">
+    <div class="grp"><span class="dot"></span> DESKTOP-8F2A · 已连接 · 2 条</div>
+    <div class="card ap">
+      <div class="ap-top"><span class="tag cmd">命令</span> web-app<span class="rt">剩余 2:41</span></div>
+      <div class="ap-cmd mono">rm -rf dist/ &amp;&amp; pnpm build</div>
+      <div class="ap-meta">Codex · 删除 214 个文件，执行 1 条命令</div>
+    </div>
+    <div class="card ap">
+      <div class="ap-top"><span class="tag file">写文件</span> web-app<span class="rt">剩余 4:12</span></div>
+      <div class="ap-cmd"><span class="p">test/rate-limit.spec.ts</span> <span class="d">· 追加 12 行</span></div>
+      <div class="ap-meta">Codex · 新建 1 个文件</div>
+    </div>
+
+    <div class="grp"><span class="dot off"></span> LAPTOP-K3 · 离线 · 1 条</div>
+    <div class="card ap off">
+      <div class="ap-top"><span class="tag done">命令</span> api-gateway<span class="rt">离线</span></div>
+      <div class="ap-cmd" style="color:var(--ink3)">pnpm install</div>
+      <div class="ap-meta">Codex · 重连后可批</div>
+    </div>
+
+    <div class="note" style="padding:12px 4px">审批绑定会话、运行实例和请求编号。过期、重放、项目停用或旧运行实例的请求都会被拒绝。</div>
+  </div>
+  <nav class="tabbar">
+    <div class="tb"><svg width="21" height="21" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.5 5.5h15v9.5h-9l-4 3v-3h-2z"/></svg>任务</div>
+    <div class="tb"><svg width="21" height="21" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="16" height="11" rx="1.6"/><path d="M8 18.5h6M11 15v3.5"/></svg>设备</div>
+    <div class="tb on"><span class="badge">2</span><svg width="21" height="21" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 3l7 2.6v5c0 4-3 7-7 8.4-4-1.4-7-4.4-7-8.4v-5z"/><path d="M8 11l2.2 2.2L14.4 9"/></svg>审批</div>
+  </nav>
+  <div class="home-ind"><i></i></div>
+</div>
+<figcaption><b>2 · 审批汇总</b>　按设备分组，离线不可批</figcaption>
+</figure>
+
+<!-- 3 审批详情 -->
+<figure id="f3">
+<div class="phone">
+  <div class="statusbar"><span>20:21</span><span class="sb-r">
+    <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4" y="5" width="3" height="6" rx="1"/><rect x="8" y="3" width="3" height="8" rx="1"/><rect x="12" y="0" width="3" height="11" rx="1"/></svg>
+    <svg width="14" height="11" viewBox="0 0 14 11" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1 4.2a8.5 8.5 0 0 1 12 0M3.4 6.6a5.2 5.2 0 0 1 7.2 0"/><circle cx="7" cy="9.4" r="1" fill="currentColor" stroke="none"/></svg>
+    <svg width="22" height="11" viewBox="0 0 22 11" fill="none"><rect x="0.5" y="0.5" width="18" height="10" rx="3" stroke="currentColor"/><rect x="2" y="2" width="13" height="7" rx="1.6" fill="currentColor"/><path d="M20 4v3" stroke="currentColor" stroke-width="1.6"/></svg>
+  </span></div>
+  <div class="appbar">
+    <div class="back"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M11 4L6 9l5 5"/></svg></div>
+    <div class="ab-main">
+      <div class="ab-title">审批</div>
+      <div class="ab-sub">DESKTOP-8F2A · 请求 #4f21</div>
+    </div>
+    <div class="ab-act"><svg width="18" height="18" viewBox="0 0 18 18" fill="currentColor"><circle cx="3" cy="9" r="1.2"/><circle cx="9" cy="9" r="1.2"/><circle cx="15" cy="9" r="1.2"/></svg></div>
+  </div>
+  <div class="body">
+    <div style="display:flex;gap:7px;align-items:center;margin:2px 0 2px">
+      <span class="tag cmd">命令</span><span class="tag done">Codex</span><span class="tag done">web-app</span>
+      <span class="pill warn" style="margin-left:auto"><span class="dot amber"></span>剩余 02:41</span>
+    </div>
+    <div class="cmdblock">rm -rf dist/ &amp;&amp; pnpm build</div>
+    <div class="card" style="margin-top:10px">
+      <div class="kv"><div class="k">工作目录</div><div class="v mono">D:\work\web-app</div></div>
+      <div class="kv"><div class="k">影响范围</div><div class="v">删除 dist/ 下 214 个文件，随后执行 1 条命令</div></div>
+      <div class="kv"><div class="k">会话</div><div class="v mono">7c1a · 运行 #18</div></div>
+      <div class="kv"><div class="k">提交时间</div><div class="v">20:08:04 · 来自 Codex</div></div>
+    </div>
+    <div class="card" style="padding:12px 14px;margin-top:10px">
+      <div style="font-size:11.5px;color:var(--ink3);margin-bottom:7px">来自会话 7c1a · 最近两条</div>
+      <div style="font-size:13px;line-height:1.55"><span class="mono" style="font-size:11px;color:var(--ink3);margin-right:6px">20:08:03</span>构建产物过期了，先清掉 dist 再重新打包。</div>
+      <div style="font-size:13px;line-height:1.55;margin-top:6px"><span class="mono" style="font-size:11px;color:var(--ink3);margin-right:6px">20:07:58</span>检查依赖：<span class="mono" style="font-size:12.5px">pnpm -v</span> → 9.12.0</div>
+    </div>
+    <div class="card" style="padding:2px 14px;margin-top:10px">
+      <div class="kv"><div class="k">访问范围</div><div class="v">项目目录可写</div></div>
+      <div class="kv"><div class="k">命令审批</div><div class="v">按需请求许可 · 由电脑端配置</div></div>
+    </div>
+    <div class="note">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="flex:none;margin-top:2px"><circle cx="8" cy="8" r="6.4"/><path d="M8 7v4M8 4.8v.1"/></svg>
+      <div><b>批准只对本次请求有效。</b>过期、重放或旧运行实例的批准会被拒绝；拒绝不会中断会话，你可以继续追问。</div>
+    </div>
+  </div>
+  <div class="dock" style="padding-top:0">
+    <div class="btn-row"><div class="btn ghost">拒绝</div><div class="btn primary">允许一次</div></div>
+    <div class="dock-hint">需要解锁确认 · 批准后任务在电脑上继续</div>
+  </div>
+  <div class="home-ind"><i></i></div>
+</div>
+<figcaption><b>3 · 审批详情</b>　命令、范围、有效期一次看全</figcaption>
+</figure>
+
+<!-- 4 执行轨迹 -->
+<figure id="f4">
+<div class="phone">
+  <div class="statusbar"><span>20:21</span><span class="sb-r">
+    <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4" y="5" width="3" height="6" rx="1"/><rect x="8" y="3" width="3" height="8" rx="1"/><rect x="12" y="0" width="3" height="11" rx="1"/></svg>
+    <svg width="14" height="11" viewBox="0 0 14 11" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1 4.2a8.5 8.5 0 0 1 12 0M3.4 6.6a5.2 5.2 0 0 1 7.2 0"/><circle cx="7" cy="9.4" r="1" fill="currentColor" stroke="none"/></svg>
+    <svg width="22" height="11" viewBox="0 0 22 11" fill="none"><rect x="0.5" y="0.5" width="18" height="10" rx="3" stroke="currentColor"/><rect x="2" y="2" width="13" height="7" rx="1.6" fill="currentColor"/><path d="M20 4v3" stroke="currentColor" stroke-width="1.6"/></svg>
+  </span></div>
+  <div class="appbar">
+    <div class="back"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M11 4L6 9l5 5"/></svg></div>
+    <div class="ab-main">
+      <div class="ab-title">web-app · Codex</div>
+      <div class="ab-sub"><span class="dot"></span>运行中 · 02:14 · 会话 7c1a</div>
+    </div>
+    <div class="ab-act"><span class="link danger">叫停</span></div>
+  </div>
+  <div class="body" style="display:flex;flex-direction:column;justify-content:flex-end">
+    <div class="card" style="margin-bottom:14px">
+      <div style="font-size:11.5px;color:var(--ink3);margin-bottom:5px">本轮目标 · 20:06:41 · 来自手机</div>
+      <div style="font-size:13.5px;line-height:1.5">把登录页的校验逻辑抽成 <span class="mono" style="font-size:12.5px">useAuth</span>，并补上过期提示</div>
+    </div>
+    <div class="ev ok"><span class="t">20:06:58</span>会话开始 · Codex 0.51.2 · 项目 web-app</div>
+    <div class="ev msg"><span class="t">20:07:12</span>校验逻辑现在散在三个组件里，我抽成一个 hook。</div>
+    <div class="ev file"><span class="t">20:07:33</span>读取 src/pages/Login.tsx
+      <div class="c">−42 +0</div>
+    </div>
+    <div class="ev msg"><span class="t">20:07:51</span>我先把校验逻辑抽成 hook，再补过期提示。
+      <div class="c">src/hooks/useAuth.ts 已创建</div>
+    </div>
+    <div class="ev file"><span class="t">20:07:55</span>写入 src/hooks/useAuth.ts
+      <div class="c">+18 −0</div>
+    </div>
+    <div class="ev ok"><span class="t">20:08:12</span>审批已批准 · 手机 Pixel 8</div>
+    <div class="ev cmd"><span class="t">20:08:41</span>执行命令
+      <div class="c">npm run dev<br>VITE v5.4.2 ready in 412 ms</div>
+    </div>
+    <div class="ev msg"><span class="t">20:08:44</span>开发服务器起来了，点下面的预览看效果。</div>
+    <div class="pv">
+      <div class="ic"><svg width="16" height="16" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="3" width="14" height="9" rx="1.5"/><path d="M6 15h6M9 12v3"/></svg></div>
+      <div><div class="tt">预览端口已就绪</div><div class="ss">localhost:5173</div></div>
+      <div class="go"><span class="pill ok">打开</span></div>
+    </div>
+    <div class="note" style="padding:6px 4px 0">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="flex:none;margin-top:2px"><path d="M3 8.4l3 3 7-6.6"/></svg>
+      <div>已补齐至 20:08:44 · 断线期间 12 条，无重复</div>
+    </div>
+  </div>
+  <div class="dock">
+    <div class="dock-box">
+      <div class="ph">接着说，模型记得上一轮</div>
+      <div class="send"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 12.5V3.5M4 7l4-4 4 4"/></svg></div>
+    </div>
+  </div>
+  <div class="home-ind"><i></i></div>
+</div>
+<figcaption><b>4 · 执行轨迹</b>　预览端口与补齐状态都在流里</figcaption>
+</figure>
+
+<!-- 5 设备 -->
+<figure id="f5">
+<div class="phone">
+  <div class="statusbar"><span>20:21</span><span class="sb-r">
+    <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4" y="5" width="3" height="6" rx="1"/><rect x="8" y="3" width="3" height="8" rx="1"/><rect x="12" y="0" width="3" height="11" rx="1"/></svg>
+    <svg width="14" height="11" viewBox="0 0 14 11" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1 4.2a8.5 8.5 0 0 1 12 0M3.4 6.6a5.2 5.2 0 0 1 7.2 0"/><circle cx="7" cy="9.4" r="1" fill="currentColor" stroke="none"/></svg>
+    <svg width="22" height="11" viewBox="0 0 22 11" fill="none"><rect x="0.5" y="0.5" width="18" height="10" rx="3" stroke="currentColor"/><rect x="2" y="2" width="13" height="7" rx="1.6" fill="currentColor"/><path d="M20 4v3" stroke="currentColor" stroke-width="1.6"/></svg>
+  </span></div>
+  <div class="appbar">
+    <div class="ab-main">
+      <h1 class="page">设备</h1>
+      <div class="ab-sub">2 台电脑 · 1 台在线</div>
+    </div>
+    <div class="ab-act"><span class="pill" style="height:26px;padding:0 10px;color:var(--ink);border-color:var(--phone-line)">扫码添加</span></div>
+  </div>
+  <div class="body" style="display:flex;flex-direction:column">
+    <div class="card">
+      <div class="dev">
+        <div>
+          <div class="nm">DESKTOP-8F2A</div>
+          <div class="meta">刚在线 · 28ms · 1 个任务在跑</div>
+        </div>
+        <div class="r"><span class="pill ok"><span class="dot"></span>已连接</span></div>
+      </div>
+      <div class="readiness"><i class="on"></i><i class="on"></i><i class="on"></i><i class="off"></i></div>
+      <div class="meta" style="font-size:11.5px;color:var(--ink3);margin-top:8px">就绪 3/4 · WorkBuddy 未登录</div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <div class="btn primary sm" style="flex:1">进入</div>
+        <div class="btn ghost sm" style="flex:1">重连</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="dev">
+        <div>
+          <div class="nm" style="color:var(--ink2)">LAPTOP-K3</div>
+          <div class="meta">3 小时前在线 · 1 条待审批</div>
+        </div>
+        <div class="r"><span class="pill off"><span class="dot off"></span>离线</span></div>
+      </div>
+      <div class="readiness"><i class="off"></i><i class="off"></i><i class="off"></i><i class="off"></i></div>
+      <div class="meta" style="font-size:11.5px;color:var(--ink3);margin-top:8px">服务未运行 · 等待电脑开机或重连</div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <div class="btn ghost sm" style="flex:1">查看上次状态</div>
+      </div>
+    </div>
+
+    <div class="note" style="padding:10px 4px;margin-top:auto">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" style="flex:none;margin-top:2px"><path d="M8 1.8 14.4 13H1.6z"/><path d="M8 6v3.2M8 11.4v.1"/></svg>
+      <div>手机只看得到电脑上已启用的项目，看不到目录结构，也不能指定任意路径。</div>
+    </div>
+  </div>
+  <nav class="tabbar">
+    <div class="tb"><svg width="21" height="21" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3.5 5.5h15v9.5h-9l-4 3v-3h-2z"/></svg>任务</div>
+    <div class="tb on"><svg width="21" height="21" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4" width="16" height="11" rx="1.6"/><path d="M8 18.5h6M11 15v3.5"/></svg>设备</div>
+    <div class="tb"><span class="badge">2</span><svg width="21" height="21" viewBox="0 0 22 22" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M11 3l7 2.6v5c0 4-3 7-7 8.4-4-1.4-7-4.4-7-8.4v-5z"/><path d="M8 11l2.2 2.2L14.4 9"/></svg>审批</div>
+  </nav>
+  <div class="home-ind"><i></i></div>
+</div>
+<figcaption><b>5 · 设备</b>　就绪度用四格条，一眼看哪项缺</figcaption>
+</figure>
+
+<!-- 6 设备详情 -->
+<figure id="f6">
+<div class="phone">
+  <div class="statusbar"><span>20:21</span><span class="sb-r">
+    <svg width="15" height="11" viewBox="0 0 15 11" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx="1"/><rect x="4" y="5" width="3" height="6" rx="1"/><rect x="8" y="3" width="3" height="8" rx="1"/><rect x="12" y="0" width="3" height="11" rx="1"/></svg>
+    <svg width="14" height="11" viewBox="0 0 14 11" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1 4.2a8.5 8.5 0 0 1 12 0M3.4 6.6a5.2 5.2 0 0 1 7.2 0"/><circle cx="7" cy="9.4" r="1" fill="currentColor" stroke="none"/></svg>
+    <svg width="22" height="11" viewBox="0 0 22 11" fill="none"><rect x="0.5" y="0.5" width="18" height="10" rx="3" stroke="currentColor"/><rect x="2" y="2" width="13" height="7" rx="1.6" fill="currentColor"/><path d="M20 4v3" stroke="currentColor" stroke-width="1.6"/></svg>
+  </span></div>
+  <div class="appbar">
+    <div class="back"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M11 4L6 9l5 5"/></svg></div>
+    <div class="ab-main">
+      <div class="ab-title">DESKTOP-8F2A</div>
+      <div class="ab-sub">已连接 · 28ms · 8F2A·4C1D</div>
+    </div>
+    <div class="ab-act"><span class="link">重新检查</span></div>
+  </div>
+  <div class="body">
+    <div class="sec-title">就绪度</div>
+    <div class="card" style="padding:4px 14px">
+      <div class="eng"><span class="dot"></span>中枢通道<span class="v">28ms</span></div>
+      <div class="eng"><span class="dot amber"></span>引擎<span class="v" style="color:var(--amber)">2/3 就绪</span></div>
+      <div class="eng"><span class="dot"></span>项目<span class="v">2 个启用</span></div>
+      <div class="eng"><span class="dot"></span>配对<span class="v">1 台手机</span></div>
+    </div>
+
+    <div class="sec-title">项目</div>
+    <div class="card" style="padding:2px 14px">
+      <div class="proj-row"><div><div>web-app</div><div class="p">D:\work\web-app · 可写</div></div><div class="r"><span class="pill" style="color:var(--ink);border-color:var(--phone-line)">进入</span></div></div>
+      <div class="proj-row"><div><div>api-gateway</div><div class="p">D:\work\api-gateway · 只读</div></div><div class="r"><span class="pill">进入</span></div></div>
+    </div>
+
+    <div class="sec-title">引擎</div>
+    <div class="card" style="padding:2px 14px">
+      <div class="eng"><span class="dot"></span>Codex<span class="v">0.51.2</span></div>
+      <div class="eng"><span class="dot"></span>Cursor<span class="v">0.42.3</span></div>
+      <div class="eng"><span class="dot amber"></span>WorkBuddy<span class="v">未登录</span></div>
+    </div>
+    <div class="note" style="padding:8px 4px">引擎不可用时，手机端不显示对应入口；登录状态只能在电脑上改。</div>
+  </div>
+  <div class="home-ind"><i></i></div>
+</div>
+<figcaption><b>6 · 设备详情</b>　四项就绪度 + 项目 + 引擎</figcaption>
+</figure>
+
+</div>
+
+<script>
+var only = new URLSearchParams(location.search).get('only');
+if (only) {
+  document.body.classList.add('only');
+  document.querySelectorAll('figure').forEach(function(f){
+    if (f.id !== 'f' + only) f.remove();
+  });
+}
+</script>
+</body>
+</html>
