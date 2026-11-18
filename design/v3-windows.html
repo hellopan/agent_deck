@@ -87,6 +87,7 @@ html:not(.dark) .i-moon{display:none}
 .nav-item.active svg{color:var(--t1)}
 .nav-badge{margin-left:auto;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:var(--badge-bg);color:var(--t2);font:400 10.5px/18px var(--mono);text-align:center}
 .nav-badge.warn{background:var(--amber-bg);color:var(--amber)}
+.nav-badge.danger{background:var(--red-bg);color:var(--red)}
 .side-foot{margin-top:auto;padding:10px 8px 2px;border-top:1px solid var(--line2);font-size:11px;color:var(--t3);display:flex;align-items:center;gap:6px}
 /* main */
 .main{flex:1;min-width:0;display:flex;flex-direction:column}
@@ -111,6 +112,7 @@ html:not(.dark) .i-moon{display:none}
 .pill{display:inline-flex;align-items:center;gap:5px;height:20px;padding:0 7px;border-radius:5px;font-size:11px;border:1px solid var(--line);color:var(--t2);background:var(--panel);white-space:nowrap}
 .pill.ok{color:var(--green);background:var(--green-bg);border-color:var(--green-line)}
 .pill.warn{color:var(--amber);background:var(--amber-bg);border-color:var(--amber-line)}
+.pill.danger{color:var(--red);background:var(--red-bg);border-color:var(--red-line)}
 .pill.off{color:var(--t3);background:var(--tag-neutral)}
 .pill.plain{background:var(--plain-bg)}
 .banner{flex:none;display:flex;align-items:center;gap:8px;padding:8px 18px;background:var(--amber-bg);border-bottom:1px solid var(--amber-line);font-size:12px;color:var(--banner-fg)}
@@ -209,6 +211,11 @@ html:not(.dark) .i-moon{display:none}
 .opt .t{font-size:12.5px;font-weight:500}
 .opt .d{font-size:11.5px;color:var(--t3);margin-top:2px}
 .group-label{font-size:11px;color:var(--t3);margin:12px 0 7px;letter-spacing:.3px}
+/* 执行权限面板要在一屏内放完：两组单选 + 引擎表 + 保存条，行距比其它面板紧一档 */
+[data-pane="perm"] .pane-pad{padding-bottom:2px}
+[data-pane="perm"] .group-label{margin:8px 0 5px}
+[data-pane="perm"] .opt{padding:6px 10px;margin-bottom:5px}
+[data-pane="perm"] .tbl td{padding:6px 10px}
 /* log */
 .log-bar{display:flex;align-items:center;gap:8px;padding:9px 12px;border-bottom:1px solid var(--line);background:var(--bg-alt);flex-wrap:wrap}
 .sel{height:26px;width:132px;border:1px solid var(--line);border-radius:5px;background:var(--panel);font:400 12px/1 inherit;color:var(--t1);padding:0 6px;font-family:inherit}
@@ -278,6 +285,10 @@ html:not(.dark) .i-moon{display:none}
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2" y="2.5" width="12" height="8" rx="1.2"/><path d="M5.5 13.5h5M8 10.5v3"/></svg>
           主机
         </button>
+        <button class="nav-item" data-go="tasks">
+          <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M5.2 6.2h5.6M5.2 9.8h3.8"/></svg>
+          任务<span class="nav-badge danger">2</span>
+        </button>
         <button class="nav-item" data-go="projects">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2 4.2c0-.7.6-1.2 1.2-1.2h2.6l1.2 1.5h5.8c.7 0 1.2.6 1.2 1.2v6.1c0 .7-.6 1.2-1.2 1.2H3.2c-.7 0-1.2-.6-1.2-1.2z"/></svg>
           项目<span class="nav-badge">3</span>
@@ -315,7 +326,7 @@ html:not(.dark) .i-moon{display:none}
       <div class="banner" id="banner">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.8 15 14H1z"/><path d="M8 6v3.4M8 11.8v.1"/></svg>
         <span><b>WorkBuddy 未登录。</b>手机端会看到该引擎不可用，Codex 与 Cursor 不受影响。</span>
-        <a class="link" data-go="settings">去引擎设置</a>
+        <a class="link" data-go="settings" data-tab="eng">去引擎设置</a>
       </div>
 
       <div class="content">
@@ -351,7 +362,7 @@ html:not(.dark) .i-moon{display:none}
                   <div class="v">Codex 0.51.2 就绪 · Cursor 0.42.3 就绪 · WorkBuddy 未登录</div>
                   <div class="sub">只探测本机安装与登录状态；未就绪的引擎不会出现在手机端的工具列表里。</div>
                 </div>
-                <div class="row-a"><a class="link">去处理</a><a class="link muted">重新检测</a></div>
+                <div class="row-a"><a class="link" data-go="settings" data-tab="eng">去处理</a><a class="link muted">重新检测</a></div>
               </div>
               <div class="row">
                 <div class="row-k">项目</div>
@@ -373,26 +384,6 @@ html:not(.dark) .i-moon{display:none}
           </div>
 
           <div class="card">
-            <div class="card-h">
-              <h2>正在执行</h2>
-              <span class="pill ok">1 个任务</span>
-              <div class="right"><a class="link muted">全部任务</a></div>
-            </div>
-            <table class="tbl">
-              <thead><tr><th style="width:150px">项目</th><th>任务</th><th style="width:100px">已运行</th><th style="width:96px">状态</th><th style="width:150px"></th></tr></thead>
-              <tbody>
-                <tr>
-                  <td>web-app</td>
-                  <td>把登录页的校验逻辑抽成 <span class="mono">useAuth</span>，并补上过期提示</td>
-                  <td class="num">02:14</td>
-                  <td><span class="pill ok"><span class="dot"></span>运行中</span></td>
-                  <td style="text-align:right"><a class="link">查看轨迹</a> <a class="link" style="margin-left:10px;color:var(--red)">叫停</a></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-
-          <div class="card">
             <div class="card-h"><h2>服务与身份</h2><div class="right"><a class="link muted">打开服务日志</a><button class="btn sm">重新配对</button><button class="btn sm danger">撤销配对</button></div></div>
             <div class="card-b">
               <div class="kv">
@@ -402,6 +393,80 @@ html:not(.dark) .i-moon{display:none}
                 <div><div class="k">上次上线</div><div class="v">2 分钟前 · 持续运行 3 天 4 小时</div></div>
               </div>
             </div>
+          </div>
+        </section>
+
+        <!-- 任务 -->
+        <section class="page" data-page="tasks">
+          <div class="page-head">
+            <div>
+              <h1>任务</h1>
+              <p>看得到全部，只批不了任何一条。批准在手机上完成，电脑端只保留叫停。</p>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-h">
+              <h2>正在执行</h2>
+              <span class="pill ok"><span class="dot"></span>1 个</span>
+              <div class="right"><span class="sub" style="margin:0">事件实时推送</span></div>
+            </div>
+            <table class="tbl">
+              <thead><tr><th style="width:120px">项目</th><th>任务</th><th style="width:84px">已运行</th><th style="width:190px">最后一条事件</th><th style="width:142px"></th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>web-app</td>
+                  <td>把登录页的校验逻辑抽成 <span class="mono">useAuth</span>，并补上过期提示</td>
+                  <td class="num">02:14</td>
+                  <td class="muted">20:08:44 消息</td>
+                  <td style="text-align:right"><a class="link">查看轨迹</a><a class="link" style="margin-left:10px;color:var(--red)">叫停</a></td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="sub" style="padding:9px 14px 11px">叫停会终止本次运行并保留已经产出的改动，二次确认后执行。撤销整个权限请到「项目」页。</div>
+          </div>
+
+          <div class="card">
+            <div class="card-h">
+              <h2>待批准</h2>
+              <span class="pill danger">2 条</span>
+              <div class="right"><span class="sub" style="margin:0">只有手机能批</span></div>
+            </div>
+            <table class="tbl">
+              <thead><tr><th style="width:120px">项目</th><th>请求内容</th><th style="width:190px">影响范围</th><th style="width:88px">已等待</th><th style="width:88px">等待对象</th></tr></thead>
+              <tbody>
+                <tr>
+                  <td>web-app</td>
+                  <td class="mono">rm -rf dist/ &amp;&amp; pnpm build</td>
+                  <td class="muted">删除并重建 dist/ 到 1 个目录</td>
+                  <td class="num">04:12</td>
+                  <td>Pixel 8</td>
+                </tr>
+                <tr>
+                  <td>api-gateway</td>
+                  <td class="mono">test/rate-limit.spec.ts <span class="muted">+12</span></td>
+                  <td class="muted">写入 1 个文件，追加 12 行</td>
+                  <td class="num">02:50</td>
+                  <td>Pixel 8</td>
+                </tr>
+              </tbody>
+            </table>
+            <div class="sub" style="padding:9px 14px 11px">这里刻意不给批准按钮：让人离开工位去处理，正是这个产品存在的理由。要拒绝请在手机上操作，或直接叫停整个任务。</div>
+          </div>
+
+          <div class="card" style="margin-bottom:0">
+            <div class="card-h">
+              <h2>最近完成</h2>
+              <div class="right"><a class="link muted" data-go="logs">在日志里看全部</a></div>
+            </div>
+            <table class="tbl">
+              <thead><tr><th style="width:120px">项目</th><th>摘要</th><th style="width:84px">耗时</th><th style="width:96px">结束于</th><th style="width:80px">结果</th></tr></thead>
+              <tbody>
+                <tr><td>api-gateway</td><td>给 <span class="mono">/orders</span> 加限流中间件</td><td class="num">11:40</td><td class="muted">19:52</td><td><span class="pill ok">完成</span></td></tr>
+                <tr><td>web-app</td><td>修掉刷新后登录态丢失</td><td class="num">06:12</td><td class="muted">19:31</td><td><span class="pill ok">完成</span></td></tr>
+                <tr><td>web-app</td><td>依赖升级到 pnpm 9.12</td><td class="num">01:08</td><td class="muted">19:04</td><td><span class="pill off">已取消</span></td></tr>
+              </tbody>
+            </table>
           </div>
         </section>
 
@@ -484,11 +549,10 @@ html:not(.dark) .i-moon{display:none}
 
               <div class="tabpanes" data-pane="perm">
                 <div class="pane-pad">
-                  <div class="sub" style="padding:10px 0 2px">策略按项目保存，只作用于当前电脑的这个项目，对后续所有会话生效。</div>
+                  <div class="sub" style="padding:6px 0 0">策略按项目保存，只作用于当前电脑的这个项目，对后续所有会话生效。新加的项目默认只读。</div>
                   <div class="group-label">访问范围</div>
                   <div class="opt on"><span class="mark"></span><div><div class="t">项目目录可写</div><div class="d">子目录继承本目录权限；符号链接与目录联接越界一律拒绝。</div></div></div>
-                  <div class="opt"><span class="mark"></span><div><div class="t">项目目录只读</div><div class="d">允许读取、搜索与预览，任何写入直接失败并上报。</div></div></div>
-                  <div class="opt"><span class="mark"></span><div><div class="t">全盘</div><div class="d">允许访问项目外的位置与网络，范围等于当前 Windows 用户权限。谨慎开启。</div></div></div>
+                  <div class="opt"><span class="mark"></span><div><div class="t">项目目录只读</div><div class="d">允许读取、搜索与预览，任何写入直接失败并上报。这是新项目的默认值。</div></div></div>
                   <div class="group-label">命令审批</div>
                   <div class="opt on"><span class="mark"></span><div><div class="t">按需请求许可</div><div class="d">需要写入或执行命令时推送到手机，等你批准后再继续。</div></div></div>
                   <div class="opt"><span class="mark"></span><div><div class="t">不请求直接执行</div><div class="d">在访问范围内直接执行，不打断。适合只读或可信项目。</div></div></div>
@@ -501,9 +565,9 @@ html:not(.dark) .i-moon{display:none}
                       <tr><td>WorkBuddy</td><td><span class="pill off">未接入</span></td><td class="muted">—</td></tr>
                     </tbody>
                   </table>
-                  <div class="sub" style="padding:8px 0 2px">Cursor 的沙箱与审批由它自己的桌面权限控制，这里不覆盖，也不会假装覆盖。</div>
+                  <div class="sub" style="padding:5px 0 0">Cursor 的沙箱与审批由它自己的桌面权限控制，这里不覆盖，也不会假装覆盖。</div>
                 </div>
-                <div class="save-bar"><span class="state">有未保存的改动</span><div class="actions"><button class="btn">放弃改动</button><button class="btn primary">保存</button></div></div>
+                <div class="save-bar"><span class="state">配置已与当前一致</span><div class="actions"><button class="btn" disabled>放弃改动</button><button class="btn primary" disabled>保存</button></div></div>
               </div>
 
               <div class="tabpanes" data-pane="plog">
@@ -529,7 +593,6 @@ html:not(.dark) .i-moon{display:none}
               <h1>日志</h1>
               <p>任务、连接与审批的原始记录。断线按游标补齐，历史随时回看。</p>
             </div>
-            <div class="actions"><button class="btn">导出日志</button></div>
           </div>
 
           <div class="card" style="margin-bottom:0">
@@ -587,7 +650,7 @@ html:not(.dark) .i-moon{display:none}
                 <div class="field"><label>设备名称</label><div class="ctl"><input class="input" value="DESKTOP-8F2A"><div class="sub">手机设备列表里显示的名字。</div></div></div>
                 <div class="field"><label>Relay 地址</label><div class="ctl"><div class="inline"><input class="input" value="wss://relay.agentdeck.dev"><button class="btn sm">测试连接</button></div><div class="sub">保存后立即重连；失败时保留输入并指出下一步。</div></div></div>
                 <div class="field"><label>证书指纹</label><div class="ctl"><input class="input" readonly value="SHA256 4C:1D:8F:2A:9E:77:B3:05:6A:11:DE:42:70:8C:19:AF"><div class="sub">已钉扎。Relay 换证后需要重新配对，否则按失败处理。</div></div></div>
-                <div class="field"><label>服务状态</label><div class="ctl" style="padding-top:5px"><span class="pill ok"><span class="dot"></span>运行中 · 登录前可上线</span><div class="sub">以 Windows 服务运行，托盘退出后继续接收指令。</div></div></div>
+                <div class="field"><label>服务状态</label><div class="ctl" style="padding-top:5px"><div style="display:flex;align-items:center;gap:10px"><span class="pill ok"><span class="dot"></span>运行中 · 登录前可上线</span><button class="btn sm">重新安装</button><button class="btn sm">停止</button></div><div class="sub">以 Windows 服务运行，托盘退出后继续接收指令。停止后手机立即断开，正在执行的任务会被取消。</div></div></div>
               </div>
               <div class="save-bar"><span class="state">有未保存的改动</span><div class="actions"><button class="btn">放弃改动</button><button class="btn primary">保存并重连</button></div></div>
             </div>
@@ -658,6 +721,12 @@ document.querySelectorAll('[data-go]').forEach(function(el){
     document.querySelectorAll('.nav-item').forEach(function(n){ n.classList.toggle('active', n.dataset.go === id); });
     document.getElementById('banner').style.display = (id === 'host') ? 'flex' : 'none';
     document.querySelector('.content').scrollTop = 0;
+    // 带 data-tab 的跳转会落到对应标签页，避免「去引擎设置」停在接入页
+    var tab = el.getAttribute('data-tab');
+    if (tab) {
+      var t = document.querySelector('.page.active .tab[data-tab="' + tab + '"]');
+      if (t) t.click();
+    }
   });
 });
 document.querySelectorAll('.tab').forEach(function(t){
