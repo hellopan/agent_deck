@@ -1,6 +1,7 @@
 package com.agentdeck.lab
 
 import android.graphics.Color as AndroidColor
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -8,36 +9,63 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import com.agentdeck.lab.ui.AboutScreen
+import com.agentdeck.lab.ui.ApprovalListScreen
 import com.agentdeck.lab.ui.ApprovalScreen
+import com.agentdeck.lab.ui.CancelDialog
 import com.agentdeck.lab.ui.ConnectScreen
-import com.agentdeck.lab.ui.DeskColors
+import com.agentdeck.lab.ui.DeckTabBar
+import com.agentdeck.lab.ui.DeviceDetailScreen
+import com.agentdeck.lab.ui.DeviceListScreen
 import com.agentdeck.lab.ui.SubmitDialog
 import com.agentdeck.lab.ui.TaskListScreen
 import com.agentdeck.lab.ui.Tok
 import com.agentdeck.lab.ui.TraceScreen
+import com.agentdeck.lab.ui.deskColors
 import com.agentdeck.lab.ui.deskTypography
 
 /**
  * Debug-only screen gallery. Nothing here ships in a release build; it exists so
- * each screen can be opened and compared against design/ui-v2.html without a
- * paired desktop. Launch with:
- *   adb shell am start -n com.agentdeck.lab/.GalleryActivity --es screen tasks
+ * each of the seven v3 screens can be opened and compared against
+ * design/v3-phone.html without a paired desktop.
+ *
+ *   adb shell am start -n com.agentdeck.lab/.GalleryActivity \
+ *       --es screen approval --ez dark true
+ *
+ * Screen names: tasks | approvals | approval | trace | follow | devices |
+ * device | cancel | submit | connect | about
  */
 class GalleryActivity : ComponentActivity() {
+    // Kept in a state holder so `am start` on a live instance switches screens
+    // instead of silently showing the previous one (onCreate does not re-run).
+    private val screenState = mutableStateOf("")
+    private val darkState = mutableStateOf(false)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        readIntent(intent)
+        val screen = screenState.value
+        val dark = darkState.value
+        Tok.dark = dark
         enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
-            navigationBarStyle = SystemBarStyle.dark(AndroidColor.TRANSPARENT),
+            statusBarStyle = if (dark) SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+            else SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
+            navigationBarStyle = if (dark) SystemBarStyle.dark(AndroidColor.TRANSPARENT)
+            else SystemBarStyle.light(AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT),
         )
-        val screen = intent.getStringExtra("screen").orEmpty()
         setContent {
-            MaterialTheme(colorScheme = DeskColors, typography = deskTypography()) {
+            val dark = darkState.value
+            Tok.dark = dark
+            MaterialTheme(colorScheme = deskColors(dark), typography = deskTypography()) {
                 val scope = rememberCoroutineScope()
                 val desk = remember {
                     Desk(LabState(this), scope).apply {
@@ -45,15 +73,25 @@ class GalleryActivity : ComponentActivity() {
                     }
                 }
                 Box(Modifier.fillMaxSize().background(Tok.Bg)) {
-                    when (screen) {
-                        "tasks" -> TaskListScreen(desk, {}, {}, {}, {})
+                    when (screenState.value) {
+                        // Composed exactly the way MainActivity composes the home
+                        // screen, tab bar included — that is what a user sees.
+                        "tasks" -> Column(Modifier.fillMaxSize()) {
+                            Box(Modifier.fillMaxWidth().weight(1f)) {
+                                TaskListScreen(desk, {}, {}, {}, {}, {})
+                            }
+                            DeckTabBar(selected = 0, approvals = desk.approvals.size, onSelect = {})
+                        }
+                        "approvals" -> ApprovalListScreen(desk, {}, {})
                         "approval" -> ApprovalScreen(
+                            desk = desk,
                             approval = sampleApprovals.first(),
-                            device = desk.label,
+                            device = "DESKTOP-8F2A",
                             busy = false,
                             onAllow = {},
                             onDecline = {},
                             onBack = {},
+                            contextPreview = sampleTrace.filter { it.text.isNotBlank() }.takeLast(2),
                         )
                         "trace" -> TraceScreen(
                             desk = desk,
@@ -75,16 +113,63 @@ class GalleryActivity : ComponentActivity() {
                                 "task/finished", "", "completed", System.currentTimeMillis(),
                             ),
                         )
-                        "connect" -> ConnectScreen(desk, {}, {}, {})
+                        "devices" -> DeviceListScreen(
+                            desk = desk,
+                            notificationsOn = true,
+                            onOpen = {},
+                            onScan = {},
+                            onAbout = {},
+                        )
+                        "device" -> DeviceDetailScreen(
+                            desk = desk,
+                            deviceId = "8f2a1c4d",
+                            notificationsOn = true,
+                            onBack = {},
+                            onPickProject = {},
+                        )
+                        "cancel" -> {
+                            TraceScreen(
+                                desk = desk,
+                                item = sampleQueue.first { it.status == "running" },
+                                taskId = "7c1e04b26a5d4f8e9b0c1d2e3f405162",
+                                projectId = "api-gateway",
+                                onBack = {},
+                                onCancel = {},
+                                preview = sampleTrace,
+                            )
+                            CancelDialog({}, {})
+                        }
                         "submit" -> {
-                            TaskListScreen(desk, {}, {}, {}, {})
+                            TaskListScreen(desk, {}, {}, {}, {}, {})
                             SubmitDialog(desk) {}
                         }
-                        else -> TaskListScreen(desk, {}, {}, {}, {})
+                        "connect" -> ConnectScreen(desk, {}, null, {}, {})
+                        "about" -> AboutScreen(onBack = {})
+                        // The tab bar is part of every home screen; this entry
+                        // renders it where it actually sits — at the bottom of a
+                        // full-height column — so the badge can be judged.
+                        else -> Column(Modifier.fillMaxSize()) {
+                            Spacer(Modifier.weight(1f))
+                            DeckTabBar(selected = 2, approvals = 2, onSelect = {})
+                        }
                     }
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        readIntent(intent)
+    }
+
+    private fun readIntent(intent: Intent?) {
+        if (intent == null) return
+        val dark = intent.getBooleanExtra("dark", darkState.value)
+        Tok.dark = dark
+        darkState.value = dark
+        screenState.value = intent.getStringExtra("screen").orEmpty()
     }
 }
 

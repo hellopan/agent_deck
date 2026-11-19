@@ -67,7 +67,7 @@ internal fun SubmitDialog(desk: Desk, onDismiss: () -> Unit) {
                 MetaLabel("项目")
                 Spacer(Modifier.height(7.dp))
                 if (desk.projects.isEmpty()) {
-                    Text("电脑还没授权任何项目，先在电脑端「设置」里加入目录。", color = Tok.Amber, fontSize = 11.sp, lineHeight = 17.sp)
+                    Text("电脑还没授权任何项目，先在电脑端「项目」页加入目录。", color = Tok.Amber, fontSize = 11.sp, lineHeight = 17.sp)
                 } else {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(desk.projects) { id ->
@@ -137,7 +137,7 @@ internal fun SubmitDialog(desk: Desk, onDismiss: () -> Unit) {
                             if (desk.busy) "正在提交…" else "提交",
                             kind = ButtonKind.Primary,
                             enabled = !desk.busy && desk.project.isNotEmpty() && text.isNotBlank(),
-                            leading = { PlusGlyph(androidx.compose.ui.graphics.Color.White, Modifier.size(15.dp)) },
+                            leading = { PlusGlyph(Tok.OnAct, Modifier.size(15.dp)) },
                             onClick = { desk.submit(text) },
                         )
                     }

@@ -37,6 +37,7 @@ internal fun ConnectScreen(
     onScan: () -> Unit,
     onBack: (() -> Unit)?,
     onRefresh: () -> Unit,
+    onAbout: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().background(Tok.Bg).statusBarsPadding()) {
         NavTop("连接", onBack = onBack, trailing = {
@@ -66,14 +67,23 @@ internal fun ConnectScreen(
                     lineHeight = 19.sp,
                 )
                 Spacer(Modifier.height(22.dp))
-                Step("1", "电脑上打开 AgentDeck 托盘", "第 2 页「状态」里有一个配对二维码")
+                Step("1", "电脑上打开 AgentDeck 托盘", "「主机」页右上角有一个配对二维码")
                 Step("2", "扫描二维码", "扫完手机会生成一把本机密钥，不会上传")
                 Step("3", "电脑上核对指纹并确认", "确认后这台手机才能提交任务")
                 Spacer(Modifier.height(22.dp))
-                PButton("扫描电脑配对码", kind = ButtonKind.Primary, enabled = !desk.busy, onClick = onScan)
-                desk.error?.let {
+                // Never disabled: a second scan replaces the attempt in flight,
+                // which is the fastest way out of a pairing that is stuck in a
+                // TLS timeout. The line underneath says what is happening.
+                PButton("扫描电脑配对码", kind = ButtonKind.Primary, onClick = onScan)
+                val line = desk.error ?: desk.notice.takeIf { it.isNotEmpty() }
+                if (line != null) {
                     Spacer(Modifier.height(12.dp))
-                    Text(it, color = Tok.Red, fontSize = 11.sp, lineHeight = 17.sp)
+                    Text(
+                        line,
+                        color = if (desk.error != null) Tok.Red else Tok.Tx3,
+                        fontSize = 11.sp,
+                        lineHeight = 17.sp,
+                    )
                 }
                 Spacer(Modifier.height(24.dp))
             } else {
@@ -84,13 +94,24 @@ internal fun ConnectScreen(
                 Spacer(Modifier.height(12.dp))
                 DevicesCard(desk)
                 Spacer(Modifier.height(12.dp))
-                Hint("配对只在本机保存密钥；撤销配对在电脑端「状态」页完成，撤销后这台手机立即失去全部权限。")
+                Hint("配对只在本机保存密钥；撤销配对在电脑端「设置 → 配对」里完成，撤销后这台手机立即失去全部权限。")
                 Spacer(Modifier.height(18.dp))
                 PButton("重新扫描配对码", onClick = onScan)
                 Spacer(Modifier.height(10.dp))
                 PButton("刷新连接", onClick = onRefresh)
                 Spacer(Modifier.height(28.dp))
             }
+            // Even before pairing, the project address is one tap away: a fresh
+            // install otherwise has no way to find where the app came from.
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "关于 AgentDeck · " + GITHUB_URL.removePrefix("https://"),
+                color = Tok.Tx3, fontSize = 11.sp, lineHeight = 17.sp,
+                modifier = Modifier.clip(RoundedCornerShape(6.dp))
+                    .clickable(role = Role.Button, onClick = onAbout)
+                    .padding(vertical = 8.dp),
+            )
+            Spacer(Modifier.height(20.dp))
         }
     }
 }

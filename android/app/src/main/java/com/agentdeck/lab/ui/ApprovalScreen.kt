@@ -5,10 +5,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -20,6 +21,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -28,23 +34,54 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.agentdeck.lab.ApprovalItem
+import com.agentdeck.lab.Desk
+import com.agentdeck.lab.TraceEvent
 import com.agentdeck.lab.shortId
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 private const val APPROVAL_TTL_SECONDS = 300f
 
+/**
+ * Screen 3. The decision, with everything that makes it a decision: the exact
+ * command, where it runs, what it may touch, and the two messages that led to
+ * it. No "needs unlock" line — being here already means the phone is unlocked;
+ * the gate is the system credential on the button, not a sentence.
+ */
 @Composable
 internal fun ApprovalScreen(
+    desk: Desk,
     approval: ApprovalItem?,
     device: String,
     busy: Boolean,
     onAllow: () -> Unit,
     onDecline: () -> Unit,
     onBack: () -> Unit,
+    contextPreview: List<TraceEvent> = emptyList(),
 ) {
+    var context by remember(approval?.id) { mutableStateOf(contextPreview) }
+    LaunchedEffect(approval?.taskId) {
+        if (contextPreview.isNotEmpty()) return@LaunchedEffect
+        val item = approval ?: return@LaunchedEffect
+        if (item.taskId.isEmpty()) return@LaunchedEffect
+        val api = runCatching { desk.api() }.getOrNull() ?: return@LaunchedEffect
+        runCatching {
+            withContext(Dispatchers.IO) { api.logs(item.projectId, item.taskId, 0) }
+        }.getOrNull()?.events
+            ?.filter { it.text.isNotBlank() }
+            ?.takeLast(2)
+            ?.let { context = it }
+    }
+
     Column(Modifier.fillMaxSize().background(Tok.Bg).statusBarsPadding()) {
-        NavTop("审批", onBack = onBack, trailing = {
-            Text(device, color = Tok.Tx3, fontSize = 10.5.sp, fontFamily = Tok.Mono, maxLines = 1)
-        })
+        NavTop(
+            "审批",
+            subtitle = {
+                Text(device + " · 请求 #" + shortId(approval?.id.orEmpty()),
+                    color = Tok.Tx3, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            },
+            onBack = onBack,
+        )
         if (approval == null) {
             Column(
                 Modifier.fillMaxSize().padding(horizontal = 24.dp),
@@ -54,35 +91,64 @@ internal fun ApprovalScreen(
                 Text("这条审批已经失效", color = Tok.Tx, fontSize = 15.sp, fontWeight = FontWeight.Medium)
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "可能已经处理过，或等待超过 5 分钟被自动拒绝。刷新任务列表可看到最新状态。",
-                    color = Tok.Tx3,
-                    fontSize = 11.5.sp,
-                    lineHeight = 18.sp,
+                    "可能已经处理过，或等待超过 5 分钟被自动拒绝。回到任务列表可看到最新状态。",
+                    color = Tok.Tx3, fontSize = 12.sp, lineHeight = 19.sp,
                 )
                 Spacer(Modifier.height(20.dp))
                 PButton("返回任务", onClick = onBack)
             }
             return@Column
         }
+
         Column(
-            Modifier.fillMaxSize().padding(horizontal = 18.dp).verticalScroll(rememberScrollState()),
+            Modifier.fillMaxWidth().weight(1f).padding(horizontal = 16.dp)
+                .verticalScroll(rememberScrollState()),
         ) {
-            RiskBanner(approval)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val risk = riskOf(approval)
+                Tag(risk.text, risk.fg, risk.bg, risk.line)
+                Spacer(Modifier.width(6.dp))
+                Tag("Codex", Tok.Tx2, Tok.TagDone, Tok.Line)
+                Spacer(Modifier.width(6.dp))
+                Tag(approval.projectId, Tok.Tx2, Tok.TagDone, Tok.Line)
+                Spacer(Modifier.weight(1f))
+                Row(
+                    Modifier.clip(RoundedCornerShape(7.dp)).background(Tok.AmberBg)
+                        .border(1.dp, Tok.AmberLine, RoundedCornerShape(7.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Dot(Tok.Amber, 5.dp)
+                    Spacer(Modifier.width(5.dp))
+                    Text("剩余 " + fmtTtl(approval.secondsLeft), color = Tok.Amber,
+                        fontSize = 11.5.sp, fontFamily = Tok.Mono)
+                }
+            }
+            Spacer(Modifier.height(10.dp))
             CommandBlock(approval)
-            Spacer(Modifier.height(12.dp))
-            FactGrid(approval, device)
-            Spacer(Modifier.height(12.dp))
-            ExpiryBar(approval.secondsLeft)
-            Spacer(Modifier.height(12.dp))
-            ScopeCard(approval)
-            Spacer(Modifier.height(12.dp))
-            Hint(
-                "批准只对这一次执行有效，下一条命令仍需重新确认。拒绝后 Codex 会收到说明，" +
-                    "可以换一种不需要该操作的做法。"
-            )
-            Spacer(Modifier.height(16.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+            Spacer(Modifier.height(10.dp))
+            FactsCard(approval)
+            if (context.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                ContextCard(approval, context)
+            }
+            Spacer(Modifier.height(10.dp))
+            PolicyCard()
+            Spacer(Modifier.height(4.dp))
+            Row(Modifier.padding(horizontal = 2.dp, vertical = 10.dp)) {
+                InfoGlyph(Tok.Tx3, Modifier.size(15.dp).padding(top = 1.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "批准只对本次请求有效。过期、重放或旧运行实例的批准会被拒绝；拒绝不会中断会话，你可以在轨迹里继续追问。",
+                    color = Tok.Tx3, fontSize = 12.sp, lineHeight = 19.sp,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+        }
+
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Box(Modifier.weight(1f)) {
                     PButton("拒绝", kind = ButtonKind.Danger, enabled = !busy, onClick = onDecline)
                 }
@@ -91,156 +157,115 @@ internal fun ApprovalScreen(
                         "允许一次",
                         kind = ButtonKind.Primary,
                         enabled = !busy,
-                        leading = { LockGlyph(androidx.compose.ui.graphics.Color.White, Modifier.size(15.dp)) },
+                        leading = { LockGlyph(Tok.OnAct, Modifier.size(15.dp)) },
                         onClick = onAllow,
                     )
                 }
             }
-            Spacer(Modifier.height(26.dp))
+            Text("批准后任务在电脑上继续", Modifier.fillMaxWidth().padding(top = 7.dp, bottom = 12.dp),
+                color = Tok.Tx3, fontSize = 11.sp,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
     }
 }
 
 @Composable
-private fun RiskBanner(approval: ApprovalItem) {
-    val risk = riskOf(approval)
-    val (title, detail) = when (risk) {
-        RISK_DELETE -> "删除或推送类操作" to "这条命令可能删除文件或改写远端分支，无法自动撤销"
-        RISK_WRITE -> "请求写入工作目录" to "沙箱为只读，写入需要你批准这一次"
-        else -> "请求执行一条命令" to "命令在项目目录内以只读沙箱运行"
-    }
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Tok.RedBg)
-            .border(1.dp, Tok.Red.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
-            .padding(horizontal = 13.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AlertGlyph(Tok.Red, Modifier.size(18.dp))
-        Spacer(Modifier.width(9.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, color = Tok.Red.copy(alpha = 0.86f), fontSize = 12.5.sp, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(3.dp))
-            Text(detail, color = Tok.Tx3, fontSize = 10.5.sp, lineHeight = 16.sp)
-        }
-        Spacer(Modifier.width(8.dp))
-        Text("高", color = Tok.Red, fontSize = 10.sp, letterSpacing = 1.sp)
+private fun InfoGlyph(color: androidx.compose.ui.graphics.Color, modifier: Modifier = Modifier) {
+    androidx.compose.foundation.Canvas(modifier) {
+        drawCircle(color, radius = size.minDimension / 2 - 1.dp.toPx(), style = androidx.compose.ui.graphics.drawscope.Stroke(1.3.dp.toPx()))
+        drawLine(color, androidx.compose.ui.geometry.Offset(size.width / 2, size.height * 0.44f),
+            androidx.compose.ui.geometry.Offset(size.width / 2, size.height * 0.72f), 1.4.dp.toPx(),
+            androidx.compose.ui.graphics.StrokeCap.Round)
+        drawCircle(color, radius = 0.9.dp.toPx(), center = androidx.compose.ui.geometry.Offset(size.width / 2, size.height * 0.3f))
     }
 }
 
 @Composable
 private fun CommandBlock(approval: ApprovalItem) {
-    val body = buildString {
-        if (approval.cwd.isNotEmpty()) {
-            append("cd ")
-            append(approval.cwd)
-            append('\n')
-        }
-        append(approval.command.ifEmpty { approval.reason.ifEmpty { "（电脑只提供了原因，没有给出命令）" } })
+    // Only the command. The working directory is a row in the facts card right
+    // below, and repeating it here made a one-line command look like two.
+    val body = approval.command.ifEmpty {
+        approval.reason.ifEmpty { "（电脑只提供了原因，没有给出命令）" }
     }
-    Row(
-        Modifier.fillMaxWidth().height(androidx.compose.foundation.layout.IntrinsicSize.Min)
-            .clip(RoundedCornerShape(8.dp)).background(Tok.Code)
-            .border(1.dp, Tok.Line, RoundedCornerShape(8.dp)),
+    Box(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Tok.Code)
+            .border(1.dp, Tok.Line2, RoundedCornerShape(12.dp))
+            .padding(horizontal = 12.dp, vertical = 12.dp),
     ) {
-        Box(Modifier.width(2.dp).fillMaxHeight().background(Tok.Red))
+        Text(body, color = Tok.Tx, fontSize = 13.5.sp, lineHeight = 21.sp, fontFamily = Tok.Mono)
+    }
+}
+
+@Composable
+private fun FactsCard(approval: ApprovalItem) {
+    // The request TTL is the only timestamp the desktop publishes, so the
+    // submission time is derived from the remaining seconds rather than invented.
+    val submittedAt = System.currentTimeMillis() -
+        ((APPROVAL_TTL_SECONDS - approval.secondsLeft) * 1000).toLong()
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Tok.Panel)
+            .border(1.dp, Tok.Line, RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 2.dp),
+    ) {
+        Fact("工作目录", approval.cwd.ifEmpty { "项目目录" }, mono = true)
+        Fact("影响范围", impactOf(approval))
+        Fact("会话", shortId(approval.taskId.ifEmpty { approval.id }), mono = true)
+        Fact("提交时间", stamp(submittedAt) + " · 来自 Codex", last = true)
+    }
+}
+
+@Composable
+private fun Fact(key: String, value: String, mono: Boolean = false, last: Boolean = false) {
+    Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
+        Text(key, Modifier.width(84.dp).padding(vertical = 10.dp), color = Tok.Tx3, fontSize = 12.5.sp)
         Text(
-            body,
-            Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
-            color = Tok.Tx2,
-            fontSize = 12.sp,
-            lineHeight = 21.sp,
-            fontFamily = Tok.Mono,
+            value,
+            Modifier.weight(1f).padding(vertical = 10.dp),
+            color = Tok.Tx,
+            fontSize = if (mono) 12.5.sp else 13.sp,
+            fontFamily = if (mono) Tok.Mono else null,
+            lineHeight = 19.sp,
         )
     }
+    if (!last) Box(Modifier.fillMaxWidth().height(1.dp).background(Tok.Line2))
 }
 
 @Composable
-private fun FactGrid(approval: ApprovalItem, device: String) {
+private fun ContextCard(approval: ApprovalItem, events: List<TraceEvent>) {
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Tok.Line2)
-            .border(1.dp, Tok.Line2, RoundedCornerShape(8.dp)),
-        verticalArrangement = Arrangement.spacedBy(1.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Tok.Panel)
+            .border(1.dp, Tok.Line, RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
-            GridCell("项目", approval.projectId, Modifier.weight(1f))
-            GridCell("设备", device, Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
-            GridCell("工作目录", approval.cwd, Modifier.weight(1f))
-            GridCell("类型", kindLabel(approval), Modifier.weight(1f))
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
-            GridCell("来源", "Codex · 只读沙箱", Modifier.weight(1f))
-            GridCell("请求 ID", shortId(approval.id), Modifier.weight(1f))
+        Text("来自会话 " + shortId(approval.taskId) + " · 最近两条", color = Tok.Tx3, fontSize = 11.5.sp)
+        Spacer(Modifier.height(7.dp))
+        events.forEachIndexed { index, event ->
+            Row {
+                Text(stamp(event.at), Modifier.width(62.dp), color = Tok.Tx3, fontSize = 11.sp,
+                    fontFamily = Tok.Mono, maxLines = 1)
+                Text(event.text, Modifier.weight(1f), color = Tok.Tx2, fontSize = 12.5.sp, lineHeight = 19.sp,
+                    maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
+            if (index < events.lastIndex) Spacer(Modifier.height(6.dp))
         }
     }
 }
 
-private fun kindLabel(approval: ApprovalItem): String = when {
-    approval.kind.contains("file", true) -> "写入文件"
-    approval.command.isEmpty() -> "等待说明"
-    else -> "执行命令"
-}
-
 @Composable
-private fun GridCell(label: String, value: String, modifier: Modifier = Modifier, valueColor: androidx.compose.ui.graphics.Color = Tok.Tx2) {
-    Column(modifier.background(Tok.Panel).padding(horizontal = 12.dp, vertical = 10.dp)) {
-        MetaLabel(label)
-        Spacer(Modifier.height(5.dp))
-        Text(value.ifEmpty { "—" }, color = valueColor, fontSize = 11.sp, fontFamily = Tok.Mono, maxLines = 1, overflow = TextOverflow.Ellipsis)
-    }
-}
-
-@Composable
-private fun ExpiryBar(secondsLeft: Int) {
-    val fraction = (secondsLeft / APPROVAL_TTL_SECONDS).coerceIn(0.02f, 1f)
+private fun PolicyCard() {
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Tok.Panel)
-            .border(1.dp, Tok.Line, RoundedCornerShape(8.dp)),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Tok.Panel)
+            .border(1.dp, Tok.Line, RoundedCornerShape(16.dp))
+            .padding(horizontal = 14.dp, vertical = 2.dp),
     ) {
-        Box(Modifier.fillMaxWidth().height(3.dp).background(Tok.Panel2)) {
-            Box(Modifier.fillMaxWidth(fraction).height(3.dp).background(Tok.Amber))
-        }
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("超时未处理将自动拒绝", color = Tok.Tx3, fontSize = 10.5.sp)
-            Spacer(Modifier.weight(1f))
-            Text(
-                "${secondsLeft.coerceAtLeast(0) / 60} 分 ${secondsLeft.coerceAtLeast(0) % 60} 秒后失效",
-                color = Tok.Amber,
-                fontSize = 10.5.sp,
-                fontFamily = Tok.Mono,
-            )
-        }
+        Fact("访问范围", "项目目录内")
+        Fact("命令审批", "按需请求许可 · 由电脑端配置", last = true)
     }
 }
 
-@Composable
-private fun ScopeCard(approval: ApprovalItem) {
-    Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Tok.Line2)
-            .border(1.dp, Tok.Line, RoundedCornerShape(8.dp)),
-        verticalArrangement = Arrangement.spacedBy(1.dp),
-    ) {
-        Box(Modifier.fillMaxWidth().background(Tok.Panel).padding(horizontal = 12.dp, vertical = 10.dp)) {
-            MetaLabel("这次操作会影响什么")
-        }
-        ScopeRow(if (approval.cwd.isEmpty()) "项目目录" else approval.cwd, "仅此目录")
-        ScopeRow("执行权限", "逐次批准")
-        ScopeRow("授权范围", "一次有效")
-    }
-}
-
-@Composable
-private fun ScopeRow(text: String, tag: String) {
-    Row(
-        Modifier.fillMaxWidth().background(Tok.Panel).padding(horizontal = 12.dp, vertical = 7.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(text, color = Tok.Tx2, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        Spacer(Modifier.width(10.dp))
-        Tag(tag, Tok.Tx3, Tok.Panel2)
-    }
+private fun impactOf(approval: ApprovalItem): String = when {
+    approval.reason.isNotBlank() -> approval.reason
+    approval.kind.contains("file", true) -> "写入项目目录内的文件"
+    approval.command.isNotBlank() -> "在项目目录内执行一条命令"
+    else -> "一次操作"
 }
