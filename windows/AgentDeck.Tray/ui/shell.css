@@ -1,0 +1,28 @@
+/* Shell overrides — the only CSS that belongs to the app and not to the board.
+   Index.html is regenerated from design/v3-windows.html by scripts/sync-ui.sh,
+   which links this file last, so everything here wins over the board's rules
+   without editing a single line of the design.
+
+   The board is a 1180x868 card floating on a grey page. In the shell it is the
+   whole window: no page padding, no card border, no shadow, no rounded corners
+   — the OS owns those edges now. Everything else stays exactly as designed, so
+   the two can still be compared one to one. */
+
+html, body { height: 100%; overflow: hidden; }
+body { padding: 0; background: var(--bg); }
+
+/* A desktop window is not a document: text is not selectable, except in fields. */
+body, button, a { -webkit-user-select: none; user-select: none; }
+input, textarea { -webkit-user-select: text; user-select: text; }
+
+.app {
+  width: 100%; max-width: none; height: 100%;
+  border: 0; border-radius: 0; box-shadow: none;
+}
+
+/* Real window controls: the drag strip covers the bar, the buttons opt out.
+   Requires CoreWebView2Settings.IsNonClientRegionSupportEnabled. */
+.titlebar { -webkit-app-region: drag; }
+.titlebar button, .titlebar .wctl { -webkit-app-region: no-drag; }
+
+:focus { outline: none; }

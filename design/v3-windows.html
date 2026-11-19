@@ -24,6 +24,7 @@
   --banner-fg:#7c4a03; --scroll:#d3d8de; --scroll-h:#bcc3cb; --close:#e81123;
   --app-shadow:0 14px 40px rgba(20,25,32,.10),0 1px 2px rgba(20,25,32,.06);
   --mono:ui-monospace,"Cascadia Mono","Consolas","SF Mono",monospace;
+  --app-icon:url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAARQSURBVFhHtVdZSCtXGD7OTAKaiJqrUFOLJSQquKGiiAiCj6IiCG7g9pC4PWhQfKiiLyK4xCAoiMuDETSLG33oi5ZaUSlFlAsl4EJRFDcUhCoFtf7lTO85ZM4kmlDvDx8h//J938ycnDNByEc4nU6+t7dX+AgAAMfyew2TyaRQqVQtSqXyZ0EQjnie//MjgLmUSuWaWq02AkAQqyuGRqP5VqFQ/B4UFAQIoa+CL9y/IoSiJOLZ2dnBgiB8Zge+Bmpra6Guru43hJCCGggJCfmBbSTo6+uD5eVlWFxcFD+HhoZkPf6ioqICcFxeXoJOp2sVxfPy8gT8jNhmjLi4OHGAjaSkJFnve6isrJRwdHR0/IEQ4pBWq/2O5/lndgDDYrGIza+vr5Jhq9Uq630LnuKEy2az/Y0QikaRkZEGjuNe2SG1Wg03Nzd08ODggA5fX1+DSqWSCXkDK044XC4XvujvUVRUlJ7juH/YQbxYSDw8PEBGRgZcXV3RXFVVlUyMhTdxYsDpdD4hhGJ9Gtje3qbDLpdLzM3NzdHc+vq6TNAfcb8MpKSk0OHn52fxO86npqbCy8uLmMefBoNBJoyB744vcb8MjI6OUgL8vDEhRnV1Ndzd3dEa/omy4m9duV8G8OLCooTAW5D8yckJKJXKgMTfNUBIfImzUVJS4tdt99vA2toaJdrb24PS0lIJysrKJL+Gnp4eqKmpod99BWvA4XDIDSQmJkqG6uvrZc8YY2pqSqyvrq5CYWEhtLW1QUtLCzQ2NkJDQ4OI1tZWccPa2dmhfO8awItsf38fdnd3YXNzEzQajUwcIz8/H6anp6G9vR2WlpZkdRY5OTkiJzHhYUC6EQVyFBcXF4tEMzMzspo3hIaGgtvtpnfD4XDgnVAnWwP+gJxqOLq7u2ke3zFsyGazQX9/P+j1eslcQUGBpwGsqQ/YAHuqGY1GWktOTpbU8J7haUIQBDg9PRVrdrs9cAOeV06eZVFREa3n5ubK6gMDAxKOlZUVMR+wAW/iOLKysmgP/kWwPfPz8xKe8fFxMR+QAVackONzQqfT0T6yGXn2DA4OSrgmJyfF/MLCgn8GysvLZeKE/Pb2FsLDw2lvc3Mz7SWRnp4u4dvY2BDz1ICvF5K3xImBw8ND4DiO9nd1ddF+fJ6YTCYJX3R0NDw+Pop1u92ONQ0oISHhE8/zf7HieMv1JU4MbG1tSWa0Wi1kZmZCWloaREREyC5oYmKCcs7OzuJXsm/EF1OFQrEZiDgx4HQ6ZSK+gHdNz+js7NxHCP33JyUsLKyU7IL+iBMDY2NjEBwc7BV458MLFC9g/PbkGRcXFxAfH99I/xd8iVV8FpBgBb3h/v4ezs7O4Pz8XAZ8Yj49PUmESRiNxi2EEM8aCDGbzT8eHx2x/R8Wx8fH0NTU9AtC6BMrTiMmJqYSGxkeHnZbrdbDkZGR/w2LZdhtNpt/io2NrWP13gu8SD4CPuNfTq0ZoViEmfAAAAAASUVORK5CYII=");
 }
 :root.dark{
   --bg:#141618; --panel:#1b1e21; --line:#2b3035; --line2:#23272b;
@@ -59,7 +60,8 @@ body{
 }
 /* title bar */
 .titlebar{height:38px;flex:none;display:flex;align-items:center;gap:9px;padding:0 6px 0 13px;background:var(--titlebar);border-bottom:1px solid var(--line);user-select:none}
-.tb-logo{width:16px;height:16px;border-radius:4px;background:var(--act);color:var(--on-act);font:600 9px/16px var(--mono);text-align:center}
+.tb-logo{width:16px;height:16px;border-radius:4px;background-color:var(--act);background-image:var(--app-icon,none);background-size:contain;background-position:center;background-repeat:no-repeat}
+.about-logo{width:44px;height:44px;flex:none;border-radius:10px;background-color:var(--act);background-image:var(--app-icon,none);background-size:contain;background-position:center;background-repeat:no-repeat}
 .tb-name{font-size:12px;font-weight:600;letter-spacing:.2px}
 .tb-sep{width:1px;height:12px;background:var(--sep);margin:0 3px}
 .tb-meta{font-size:11.5px;color:var(--t3)}
@@ -76,7 +78,7 @@ html:not(.dark) .i-moon{display:none}
 .shell{flex:1;display:flex;min-height:0}
 .sidebar{width:198px;flex:none;background:var(--bg-alt);border-right:1px solid var(--line);display:flex;flex-direction:column;padding:14px 10px 10px}
 .brand{display:flex;align-items:center;gap:9px;padding:0 6px 16px}
-.brand-mark{width:30px;height:30px;border-radius:8px;background:var(--act);color:var(--on-act);font:600 14px/30px var(--mono);text-align:center;flex:none}
+.brand-mark{width:30px;height:30px;border-radius:8px;background-color:var(--act);background-image:var(--app-icon,none);background-size:contain;background-position:center;background-repeat:no-repeat;flex:none}
 .brand-name{font-size:13.5px;font-weight:600;line-height:1.3}
 .brand-sub{font-size:10.5px;color:var(--t3);line-height:1.4;margin-top:1px}
 .nav{display:flex;flex-direction:column;gap:2px}
@@ -106,6 +108,10 @@ html:not(.dark) .i-moon{display:none}
 .btn.sm{height:24px;padding:0 8px;font-size:12px}
 .btn.danger{color:var(--red);border-color:var(--red-line)}
 .btn.danger:hover{background:var(--red-bg)}
+/* Quiet = same outline as a normal button, but the label steps back to t2 so a
+   row of three buttons still has an order: quiet < normal < danger. */
+.btn.quiet{color:var(--t2)}
+.btn.quiet:hover{color:var(--t1)}
 .btn:disabled{color:var(--t3);cursor:default;background:var(--hover);border-color:var(--line)}
 .icon-btn{width:28px;height:28px;display:grid;place-items:center;border:1px solid transparent;background:none;border-radius:6px;color:var(--t2);cursor:pointer}
 .icon-btn:hover{background:var(--hover2);border-color:var(--line)}
@@ -140,7 +146,22 @@ html:not(.dark) .i-moon{display:none}
 .row-k{width:86px;flex:none;font-size:12.5px;color:var(--t3);padding-top:1px}
 .row-v{flex:1;min-width:0;font-size:12.5px}
 .row-v>.v{font-weight:500}
-.row-a{flex:none;display:flex;gap:12px;padding-top:1px}
+.row-a{flex:none;display:flex;gap:6px;padding-top:1px}
+/* Row actions are buttons, not underlined words: every line of the checklist
+   ends with something you can press, and a bare word at this size reads as a
+   label. The first pass used --line for the border and vanished into the white
+   card, so these use --sep plus a one-pixel lift. Neutral on purpose — four
+   tinted buttons stacked down the page would compete with the values they act
+   on, and the primary/secondary split is carried by weight, not colour. */
+.row-a .link{
+  display:inline-flex;align-items:center;height:24px;padding:0 9px;
+  border:1px solid var(--sep);border-radius:6px;background:var(--bg-alt);
+  font-size:12px;color:var(--t1);white-space:nowrap;
+  box-shadow:0 1px 1px rgba(20,25,32,.04);
+}
+.row-a .link:hover{background:var(--panel);border-color:var(--mark);text-decoration:none}
+.row-a .link.muted{color:var(--t2);border-color:var(--sep);background:var(--panel);box-shadow:none}
+.row-a .link.muted:hover{color:var(--t1);border-color:var(--sep);background:var(--hover)}
 .sub{font-size:11.5px;color:var(--t3);margin-top:2px;line-height:1.5}
 .kv{display:grid;grid-template-columns:1fr 1fr;gap:0 26px}
 .kv>div{padding:8px 0;border-bottom:1px solid var(--line2)}
@@ -230,9 +251,29 @@ html:not(.dark) .i-moon{display:none}
 .log-foot{display:flex;align-items:center;padding:9px 14px;font-size:11.5px;color:var(--t3);border-top:1px solid var(--line);background:var(--bg-alt)}
 .log-foot .r{margin-left:auto;font-family:var(--mono);font-size:11px}
 /* qr */
-.qr{width:150px;height:150px;border:1px dashed var(--qr-line);border-radius:8px;background:var(--qr-bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--qr-fg);font-size:11.5px;flex:none;text-align:center;line-height:1.6}
+.pair-media{width:176px;flex:none;display:flex;flex-direction:column;gap:7px}
+.qr{width:176px;height:176px;border:1px dashed var(--qr-line);border-radius:8px;background:var(--qr-bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;color:var(--qr-fg);font-size:11.5px;text-align:center;line-height:1.6}
+.qr.has-code{padding:9px;border-style:solid;border-color:var(--line);background:#fff;cursor:zoom-in}
+.qr.has-code img{width:100%;height:100%;object-fit:contain;image-rendering:pixelated;border-radius:2px}
+/* An expired code stays on screen (so the square does not jump back to an
+   empty frame) but is visibly dead — scanning it would only fail. */
+.qr.expired{opacity:.38;filter:grayscale(1)}
+.qr-cap{font-family:var(--mono);font-size:10.5px;color:var(--t3);text-align:center;letter-spacing:.2px}
+.qr-cap.warn{color:var(--red)}
 .pair-wrap{display:flex;gap:18px;padding:14px 4px}
 .pair-info{flex:1;min-width:0}
+/* sheet */
+/* The title bar is a real non-client area: WebView2 promotes app-region:drag
+   to OS chrome, which paints above the DOM, so a fixed scrim cannot cover it.
+   Starting below the bar is the honest version — dimming the content, leaving
+   the window's own frame alone, the way a native modal behaves. */
+.scrim{position:fixed;inset:38px 0 0;z-index:60;background:rgba(28,32,36,.34);display:flex;align-items:center;justify-content:center;padding:24px}
+.scrim[hidden]{display:none}
+.sheet{width:420px;max-width:100%;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:0 18px 48px rgba(16,20,24,.24);padding:20px 22px 16px}
+.sheet h3{margin:0 0 7px;font-size:14px;font-weight:600}
+.sheet p{margin:0 0 14px;font-size:12px;color:var(--t2);line-height:1.65}
+.fp{font-family:var(--mono);font-size:12.5px;letter-spacing:.8px;line-height:1.8;text-align:center;word-break:break-all;background:var(--bg-alt);border:1px solid var(--line);border-radius:6px;padding:11px 14px}
+.sheet .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
 /* status bar */
 .statusbar{height:30px;flex:none;display:flex;align-items:center;gap:14px;padding:0 14px;background:var(--titlebar);border-top:1px solid var(--line);font-size:11px;color:var(--t3)}
 .statusbar .r{margin-left:auto;display:flex;gap:16px;font-family:var(--mono);font-size:10.5px;letter-spacing:.2px}
@@ -255,11 +296,11 @@ html:not(.dark) .i-moon{display:none}
 <div class="app">
 
   <div class="titlebar">
-    <div class="tb-logo">A</div>
+    <div class="tb-logo" aria-label="AgentDeck"></div>
     <div class="tb-name">AgentDeck</div>
     <div class="tb-sep"></div>
-    <div class="tb-meta">DESKTOP-8F2A</div>
-    <div class="tb-meta mono">8F2A·4C1D</div>
+    <div class="tb-meta" id="tb-machine">DESKTOP-8F2A</div>
+    <div class="tb-meta mono" id="tb-device">8F2A·4C1D</div>
     <div class="tb-right">
       <button class="theme-btn" title="切换深浅色（样稿用）" onclick="(function(){var d=document.documentElement.classList.toggle('dark');try{localStorage.setItem('ad-theme',d?'dark':'light')}catch(e){}})()">
         <svg class="i-moon" width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8z"/></svg>
@@ -274,7 +315,7 @@ html:not(.dark) .i-moon{display:none}
   <div class="shell">
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-mark">A</div>
+        <div class="brand-mark" aria-label="AgentDeck"></div>
         <div>
           <div class="brand-name">AgentDeck</div>
           <div class="brand-sub">远程编码工作台</div>
@@ -287,11 +328,11 @@ html:not(.dark) .i-moon{display:none}
         </button>
         <button class="nav-item" data-go="tasks">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="2.5" y="2.5" width="11" height="11" rx="2"/><path d="M5.2 6.2h5.6M5.2 9.8h3.8"/></svg>
-          任务<span class="nav-badge danger">2</span>
+          任务<span class="nav-badge danger" id="badge-tasks">2</span>
         </button>
         <button class="nav-item" data-go="projects">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2 4.2c0-.7.6-1.2 1.2-1.2h2.6l1.2 1.5h5.8c.7 0 1.2.6 1.2 1.2v6.1c0 .7-.6 1.2-1.2 1.2H3.2c-.7 0-1.2-.6-1.2-1.2z"/></svg>
-          项目<span class="nav-badge">3</span>
+          项目<span class="nav-badge" id="badge-projects">3</span>
         </button>
         <button class="nav-item" data-go="logs">
           <svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M3 4h10M3 8h10M3 12h6"/></svg>
@@ -302,30 +343,29 @@ html:not(.dark) .i-moon{display:none}
           设置
         </button>
       </nav>
-      <div class="side-foot"><span class="dot"></span>1 个任务在跑 · 2 待审批</div>
+      <div class="side-foot" id="side-foot"><span class="dot"></span>1 个任务在跑 · 2 待审批</div>
     </aside>
 
     <main class="main">
       <div class="topbar">
-        <div class="state"><span class="dot"></span>已就绪 · 手机可连</div>
-        <span class="pill plain">2 个待审批</span>
-        <span class="pill">Pixel 8</span>
-        <span class="pill">1 台手机已连接</span>
-        <span class="pill">服务模式 · 登录前可用</span>
+        <div class="state" id="top-state"><span class="dot"></span>已就绪 · 手机可连</div>
+        <span class="pill plain" id="top-pending">2 个待审批</span>
+        <span class="pill" id="top-phone">Pixel 8</span>
+        <span class="pill" id="top-service">服务模式 · 登录前可用</span>
         <div class="spacer"></div>
-        <div class="meta">28ms</div>
-        <button class="icon-btn" title="重新检查">
+        <div class="meta" id="top-meta">28ms</div>
+        <button class="icon-btn" title="重新检查" data-act="refresh">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M13 8a5 5 0 1 1-1.6-3.7"/><path d="M13 2.5V5h-2.5"/></svg>
         </button>
-        <button class="btn">暂停接收</button>
-        <button class="icon-btn" title="更多">
+        <button class="btn" id="top-pause" data-act="pause">暂停接收</button>
+        <button class="icon-btn" title="更多" id="top-more">
           <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><circle cx="3" cy="8" r="1.1"/><circle cx="8" cy="8" r="1.1"/><circle cx="13" cy="8" r="1.1"/></svg>
         </button>
       </div>
 
       <div class="banner" id="banner">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 1.8 15 14H1z"/><path d="M8 6v3.4M8 11.8v.1"/></svg>
-        <span><b>WorkBuddy 未登录。</b>手机端会看到该引擎不可用，Codex 与 Cursor 不受影响。</span>
+        <span id="banner-text"><b>WorkBuddy 未登录。</b>手机端会看到该引擎不可用，Codex 与 Cursor 不受影响。</span>
         <a class="link" data-go="settings" data-tab="eng">去引擎设置</a>
       </div>
 
@@ -343,8 +383,8 @@ html:not(.dark) .i-moon{display:none}
           <div class="card">
             <div class="card-h">
               <h2>就绪度</h2>
-              <span class="pill ok"><span class="dot"></span>3 项通过</span>
-              <span class="pill warn">1 项待处理</span>
+              <span class="pill ok" id="ready-pass"><span class="dot"></span>3 项通过</span>
+              <span class="pill warn" id="ready-pending">1 项待处理</span>
               <div class="right"><a class="link" id="collapse">收起</a></div>
             </div>
             <div class="card-b" id="ready-body">
@@ -384,9 +424,9 @@ html:not(.dark) .i-moon{display:none}
           </div>
 
           <div class="card">
-            <div class="card-h"><h2>服务与身份</h2><div class="right"><a class="link muted">打开服务日志</a><button class="btn sm">重新配对</button><button class="btn sm danger">撤销配对</button></div></div>
+            <div class="card-h"><h2>服务与身份</h2><div class="right"><button class="btn sm quiet">打开服务日志</button><button class="btn sm">重新配对</button><button class="btn sm danger">撤销配对</button></div></div>
             <div class="card-b">
-              <div class="kv">
+              <div class="kv" id="svc-kv">
                 <div><div class="k">服务模式</div><div class="v">已安装 · 自动启动，登录前即可上线</div></div>
                 <div><div class="k">Relay 地址</div><div class="v mono">wss://relay.agentdeck.dev</div></div>
                 <div><div class="k">设备 ID</div><div class="v mono">8F2A·4C1D</div></div>
@@ -408,12 +448,12 @@ html:not(.dark) .i-moon{display:none}
           <div class="card">
             <div class="card-h">
               <h2>正在执行</h2>
-              <span class="pill ok"><span class="dot"></span>1 个</span>
+              <span class="pill ok" id="running-pill"><span class="dot"></span>1 个</span>
               <div class="right"><span class="sub" style="margin:0">事件实时推送</span></div>
             </div>
             <table class="tbl">
               <thead><tr><th style="width:120px">项目</th><th>任务</th><th style="width:84px">已运行</th><th style="width:190px">最后一条事件</th><th style="width:142px"></th></tr></thead>
-              <tbody>
+              <tbody id="tasks-running">
                 <tr>
                   <td>web-app</td>
                   <td>把登录页的校验逻辑抽成 <span class="mono">useAuth</span>，并补上过期提示</td>
@@ -429,12 +469,12 @@ html:not(.dark) .i-moon{display:none}
           <div class="card">
             <div class="card-h">
               <h2>待批准</h2>
-              <span class="pill danger">2 条</span>
+              <span class="pill danger" id="pending-pill">2 条</span>
               <div class="right"><span class="sub" style="margin:0">只有手机能批</span></div>
             </div>
             <table class="tbl">
               <thead><tr><th style="width:120px">项目</th><th>请求内容</th><th style="width:190px">影响范围</th><th style="width:88px">已等待</th><th style="width:88px">等待对象</th></tr></thead>
-              <tbody>
+              <tbody id="tasks-pending">
                 <tr>
                   <td>web-app</td>
                   <td class="mono">rm -rf dist/ &amp;&amp; pnpm build</td>
@@ -461,7 +501,7 @@ html:not(.dark) .i-moon{display:none}
             </div>
             <table class="tbl">
               <thead><tr><th style="width:120px">项目</th><th>摘要</th><th style="width:84px">耗时</th><th style="width:96px">结束于</th><th style="width:80px">结果</th></tr></thead>
-              <tbody>
+              <tbody id="tasks-done">
                 <tr><td>api-gateway</td><td>给 <span class="mono">/orders</span> 加限流中间件</td><td class="num">11:40</td><td class="muted">19:52</td><td><span class="pill ok">完成</span></td></tr>
                 <tr><td>web-app</td><td>修掉刷新后登录态丢失</td><td class="num">06:12</td><td class="muted">19:31</td><td><span class="pill ok">完成</span></td></tr>
                 <tr><td>web-app</td><td>依赖升级到 pnpm 9.12</td><td class="num">01:08</td><td class="muted">19:04</td><td><span class="pill off">已取消</span></td></tr>
@@ -477,11 +517,11 @@ html:not(.dark) .i-moon{display:none}
               <h1>项目</h1>
               <p>远程编码只限已授权目录；越界写入会被拒绝并记录。手机看不到真实路径以外的任何位置。</p>
             </div>
-            <div class="actions"><button class="btn">添加项目目录</button></div>
+            <div class="actions"><button class="btn" data-act="edit-projects">添加项目目录</button></div>
           </div>
 
           <div class="split">
-            <div class="card proj" style="margin-bottom:0">
+            <div class="card proj" style="margin-bottom:0" id="proj-list">
               <div class="search">
                 <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><circle cx="7" cy="7" r="4.2"/><path d="M10.2 10.2 13.5 13.5"/></svg>
                 <input class="input" placeholder="搜索项目">
@@ -501,7 +541,7 @@ html:not(.dark) .i-moon{display:none}
               <div class="sub" style="margin-top:auto;padding:10px 12px;border-top:1px solid var(--line2)">停用或移除后，手机立即失去访问，正在跑的任务会被取消。</div>
             </div>
 
-            <div class="card proj-detail" style="margin-bottom:0">
+            <div class="card proj-detail" style="margin-bottom:0" id="proj-detail">
               <div class="detail-head">
                 <div>
                   <h3>web-app</h3>
@@ -596,7 +636,7 @@ html:not(.dark) .i-moon{display:none}
           </div>
 
           <div class="card" style="margin-bottom:0">
-            <div class="log-bar">
+            <div class="log-bar" id="log-bar">
               <select class="sel"><option>全部项目</option><option>web-app</option><option>api-gateway</option></select>
               <select class="sel"><option>全部任务</option><option>把登录页的校验逻辑抽成 useAuth</option></select>
               <select class="sel"><option>全部类别</option><option>连接</option><option>任务</option><option>审批</option><option>命令</option><option>文件</option></select>
@@ -608,7 +648,7 @@ html:not(.dark) .i-moon{display:none}
             </div>
             <table class="tbl log-tbl">
               <thead><tr><th style="width:82px">时间</th><th style="width:64px">类别</th><th>内容</th></tr></thead>
-              <tbody>
+              <tbody id="log-tbody">
                 <tr><td class="num">20:08:41</td><td><span class="lv c1">命令</span></td><td class="mono">npm run dev &nbsp;<span class="muted">cwd D:\work\web-app</span></td></tr>
                 <tr><td class="num">20:08:39</td><td><span class="lv c1">命令</span></td><td class="mono">VITE v5.4.2 ready in 412 ms &nbsp;<span class="muted">Local: http://localhost:5173/</span></td></tr>
                 <tr><td class="num">20:08:12</td><td><span class="lv c4">审批</span></td><td>批准一次 · 写入 src/hooks/useAuth.ts · 有效期剩余 2m41s → 已执行</td></tr>
@@ -621,7 +661,7 @@ html:not(.dark) .i-moon{display:none}
                 <tr><td class="num">20:05:40</td><td><span class="lv c2">连接</span></td><td>Relay 重连成功（第 1 次尝试）· 事件游标 1204 已补齐 12 条</td></tr>
               </tbody>
             </table>
-            <div class="log-foot">
+            <div class="log-foot" id="log-foot">
               <span><span class="dot"></span> 实时订阅中 · 已保留 1,204 行 · 上限 5,000 行</span>
               <span class="r">最后一条 20:08:41</span>
             </div>
@@ -643,6 +683,7 @@ html:not(.dark) .i-moon{display:none}
               <button class="tab" data-tab="eng">引擎</button>
               <button class="tab" data-tab="pair">配对</button>
               <button class="tab" data-tab="diag">诊断</button>
+              <button class="tab" data-tab="about">关于</button>
             </div>
 
             <div class="tabpanes active" data-pane="net">
@@ -651,6 +692,7 @@ html:not(.dark) .i-moon{display:none}
                 <div class="field"><label>Relay 地址</label><div class="ctl"><div class="inline"><input class="input" value="wss://relay.agentdeck.dev"><button class="btn sm">测试连接</button></div><div class="sub">保存后立即重连；失败时保留输入并指出下一步。</div></div></div>
                 <div class="field"><label>证书指纹</label><div class="ctl"><input class="input" readonly value="SHA256 4C:1D:8F:2A:9E:77:B3:05:6A:11:DE:42:70:8C:19:AF"><div class="sub">已钉扎。Relay 换证后需要重新配对，否则按失败处理。</div></div></div>
                 <div class="field"><label>服务状态</label><div class="ctl" style="padding-top:5px"><div style="display:flex;align-items:center;gap:10px"><span class="pill ok"><span class="dot"></span>运行中 · 登录前可上线</span><button class="btn sm">重新安装</button><button class="btn sm">停止</button></div><div class="sub">以 Windows 服务运行，托盘退出后继续接收指令。停止后手机立即断开，正在执行的任务会被取消。</div></div></div>
+                <div class="field"><label>版本与更新</label><div class="ctl" style="padding-top:5px"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="pill off"><span class="dot"></span>当前 v0.2.3 · 已是最新</span><button class="btn sm">检查更新</button><button class="btn sm primary" disabled>下载并安装</button></div><div class="sub">从 GitHub Releases 获取，校验 SHA-256 后自动重启安装；正在跑的任务会被取消。</div></div></div>
               </div>
               <div class="save-bar"><span class="state">有未保存的改动</span><div class="actions"><button class="btn">放弃改动</button><button class="btn primary">保存并重连</button></div></div>
             </div>
@@ -669,9 +711,15 @@ html:not(.dark) .i-moon{display:none}
 
             <div class="tabpanes" data-pane="pair">
               <div class="pair-wrap">
-                <div class="qr"><div>二维码</div><div style="font-family:var(--mono);font-size:10px">有效期 04:32</div></div>
+                <div class="pair-media">
+                  <div class="qr" data-act="pair"><div>二维码</div><div style="font-family:var(--mono);font-size:10px">点此生成</div></div>
+                  <div class="qr-cap">配对码两分钟内有效</div>
+                </div>
                 <div class="pair-info">
-                  <div style="font-size:12.5px;font-weight:500">用手机扫描，在电脑上确认</div>
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div style="font-size:12.5px;font-weight:500">用手机扫描，在电脑上确认</div>
+                    <button class="btn sm" data-act="pair" style="margin-left:auto;flex:none">生成配对码</button>
+                  </div>
                   <div class="sub" style="margin-bottom:10px">一次性二维码，过期后重新生成。配对后手机私钥进入 Keystore，正常重启无需重新扫码。</div>
                   <table class="tbl">
                     <thead><tr><th>已配对设备</th><th style="width:90px">指纹</th><th style="width:96px">配对时间</th><th style="width:70px"></th></tr></thead>
@@ -697,20 +745,58 @@ html:not(.dark) .i-moon{display:none}
                 <div class="sub">诊断包不含任务正文与凭据，仅连接、版本与错误摘要。</div>
               </div>
             </div>
+
+            <div class="tabpanes" data-pane="about">
+              <div class="pane-pad">
+                <div class="field"><label>AgentDeck</label><div class="ctl">
+                  <div style="font-size:14px;font-weight:500;margin-bottom:4px">远程编码工作台</div>
+                  <div class="sub">桌面端（Windows 托盘）与 Android 端通过 Relay 连接；配对后端到端加密，手机上可查看项目、下发任务与审批。</div>
+                </div></div>
+                <div class="field"><label>版本</label><div class="ctl" style="padding-top:5px">
+                  <span class="pill off"><span class="dot"></span>v0.2.4</span>
+                  <div class="sub">更新检查在「接入 → 版本与更新」，从 GitHub Releases 获取，校验 SHA-256 后自动安装。</div>
+                </div></div>
+                <div class="field"><label>源码与反馈</label><div class="ctl">
+                  <div class="inline"><input class="input mono" readonly value="https://github.com/hellopan/agent_deck"><button class="btn sm" data-act="open-github">在浏览器中打开</button><button class="btn sm" data-act="copy" data-copy="https://github.com/hellopan/agent_deck">复制地址</button></div>
+                  <div class="sub">问题反馈、更新日志与新版本下载都在这个仓库的 Issues 与 Releases。</div>
+                </div></div>
+              </div>
+            </div>
           </div>
         </section>
 
       </div>
 
       <div class="statusbar">
-        <span class="item"><span class="dot"></span>服务运行中 · 28ms</span>
-        <span class="item">待处理 2</span>
-        <span class="item">1 个任务在跑</span>
-        <div class="r"><span>AGENTDECK 0.4.0</span><span>8F2A·4C1D</span></div>
+        <span class="item" id="status-text"><span class="dot"></span>服务运行中 · 28ms</span>
+        <span class="item" id="status-mid">待处理 2 · 1 个任务在跑</span>
+        <div class="r" id="status-right"><span>AGENTDECK 0.4.0</span><span>8F2A·4C1D</span></div>
       </div>
     </main>
   </div>
 </div>
+
+  <!-- 配对指纹确认层：核对在本页完成，不再开系统对话框。
+       指纹是给人读的，所以按 8 位分组、等宽、居中；整段给全，不做截断。 -->
+  <div class="scrim" id="pair-sheet" hidden>
+    <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pair-sheet-title">
+      <h3 id="pair-sheet-title">确认手机身份</h3>
+      <p>请与手机屏幕上显示的指纹逐行核对，一致才继续。不一致说明连上来的不是这台手机，取消后重新生成二维码。</p>
+      <div class="fp" id="pair-sheet-fp">—</div>
+      <div class="actions">
+        <button class="btn" data-sheet="cancel">取消</button>
+        <button class="btn primary" data-sheet="confirm">确认配对</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 二维码放大层：176px 在缩放的 DPI 下不一定扫得动，点一下就够大。 -->
+  <div class="scrim" id="qr-sheet" hidden>
+    <div class="sheet" style="width:auto;padding:16px" data-sheet="dismiss">
+      <img id="qr-sheet-img" alt="配对二维码" style="display:block;width:auto;height:auto;max-width:min(628px,calc(100vw - 56px));max-height:calc(100vh - 150px);image-rendering:pixelated">
+      <div class="qr-cap" style="margin-top:10px">用 AgentDeck Android 应用扫码 · 点空白处关闭</div>
+    </div>
+  </div>
 
 <script>
 document.querySelectorAll('[data-go]').forEach(function(el){

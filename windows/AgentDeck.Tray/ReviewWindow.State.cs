@@ -1,25 +1,31 @@
+using System.Globalization;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 
 namespace AgentDeck.Tray;
 
-// 状态 page: the channel, this machine's identity and the phones that may talk
-// to it. Everything here is read from disk or from the running process — the
-// design's latency graph and "last reconnect" are deliberately absent because
-// nothing measures them yet, and an invented number is worse than a gap.
+// 主机 page: four readiness checks on one card, then service and identity. The
+// page answers one question — can a phone give this machine an instruction right
+// now — so every row carries both the value and what to do about it. Numbers the
+// process cannot measure (latency, last reconnect) are absent rather than faked.
 internal sealed partial class ReviewWindow
 {
-    private readonly DeckTheme.StatusDot channelDot = DeckTheme.Dot(DeckTheme.Dim, 7);
-    private readonly Label channelTitle = DeckTheme.Label("未注册", DeckTheme.Hero);
-    private readonly Label channelAddr = DeckTheme.Label("", DeckTheme.MonoSmall, DeckTheme.Dim);
-    private readonly Label channelSince = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
-    private readonly Label metricUptime = DeckTheme.Label("—", DeckTheme.MonoHero, DeckTheme.Muted);
-    private readonly Label metricDevice = DeckTheme.Label("—", DeckTheme.MonoHero, DeckTheme.Muted);
-    private readonly Label metricRegistered = DeckTheme.Label("—", DeckTheme.MonoHero, DeckTheme.Muted);
-    private readonly Label identityMachine = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
-    private readonly Label identityDevice = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
-    private readonly Label identityRegistered = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
-    private readonly Label identityRelay = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly DeckTheme.PillLabel readyPass =
+        DeckTheme.Pill("0 项通过", DeckTheme.PillTone.Good, dot: true);
+    private readonly DeckTheme.PillLabel readyPending =
+        DeckTheme.Pill("0 项待处理", DeckTheme.PillTone.Warning);
+    private readonly Label readyChannelValue = DeckTheme.Label("—", DeckTheme.Body);
+    private readonly Label readyChannelSub = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
+    private readonly Label readyEngineValue = DeckTheme.Label("—", DeckTheme.Body);
+    private readonly Label readyEngineSub = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
+    private readonly Label readyProjectValue = DeckTheme.Label("—", DeckTheme.Body);
+    private readonly Label readyProjectSub = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
+    private readonly Label readyPairValue = DeckTheme.Label("—", DeckTheme.Body);
+    private readonly Label readyPairSub = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
+    private readonly Label serviceModeValue = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly Label serviceRelayValue = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly Label serviceDeviceValue = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly Label serviceSinceValue = DeckTheme.Label("—", DeckTheme.Small, DeckTheme.Muted);
     private readonly Label asideVersion = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
     private readonly Label asideUptime = DeckTheme.Label("—", DeckTheme.Monospace, DeckTheme.Muted);
     private readonly FlowLayoutPanel pairedList = new()
@@ -27,186 +33,277 @@ internal sealed partial class ReviewWindow
         Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
         FlowDirection = FlowDirection.TopDown, WrapContents = false
     };
-    private readonly FlowLayoutPanel eventList = new()
-    {
-        Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-        FlowDirection = FlowDirection.TopDown, WrapContents = false
-    };
     private Control pairedEmpty = null!;
     private readonly Label pairHint = DeckTheme.Label("同一时间只允许一个配对请求", DeckTheme.Tiny, DeckTheme.Dim);
     private string pairedSignature = "\0";
-    private string eventSignature = "\0";
+    private bool readyChannelOk, readyEngineOk, readyProjectOk, readyPairOk;
 
     private Control StatePage()
     {
-        var body = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Canvas, Margin = Padding.Empty,
-            ColumnCount = 3, RowCount = 1
-        };
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 57));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 16));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 43));
-        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        body.Controls.Add(StateMain(), 0, 0);
-        body.Controls.Add(new Panel { BackColor = DeckTheme.Canvas }, 1, 0);
-        body.Controls.Add(StateSide(), 2, 0);
-        return Page("状态", "这台电脑的远程通道、身份与已配对设备。", body, StateAside());
+        var body = DeckTheme.Table(background: DeckTheme.Canvas);
+        DeckTheme.Row(body, ReadinessCard(), 100, fill: true);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Canvas }, 16);
+        DeckTheme.Row(body, ServiceIdentityCard(), 196);
+        return Page("主机", "这台电脑正在替你的手机做什么。四项都通过，手机才能下发指令。", body, StateAside());
     }
 
     private Control StateAside()
     {
-        var aside = new TableLayoutPanel
+        // One line, not two stacked columns: the stacked version needed ~200px and
+        // the page title took it, so the values wrapped mid-word at this width.
+        var row = new TableLayoutPanel
         {
             AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Fill,
-            BackColor = DeckTheme.Canvas, Margin = Padding.Empty, ColumnCount = 2, RowCount = 1
+            BackColor = DeckTheme.Canvas, Margin = Padding.Empty, ColumnCount = 3, RowCount = 1
         };
-        aside.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        aside.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        aside.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        aside.Controls.Add(AsideItem("CODEX", asideVersion), 0, 0);
-        aside.Controls.Add(AsideItem("已运行", asideUptime), 1, 0);
-        return aside;
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var caption = DeckTheme.Label("CODEX", DeckTheme.Tiny, DeckTheme.Dim);
+        caption.AutoSize = true;
+        caption.Dock = DockStyle.None;
+        caption.Anchor = AnchorStyles.Right;
+        caption.Margin = new Padding(0, 0, 7, 0);
+        row.Controls.Add(caption, 0, 0);
+
+        asideVersion.AutoSize = true;
+        asideVersion.Dock = DockStyle.None;
+        asideVersion.Anchor = AnchorStyles.Right;
+        asideVersion.Font = DeckTheme.MonoSmall;
+        asideVersion.ForeColor = DeckTheme.Muted;
+        asideVersion.Margin = new Padding(0, 0, 10, 0);
+        row.Controls.Add(asideVersion, 1, 0);
+
+        asideUptime.AutoSize = true;
+        asideUptime.Dock = DockStyle.None;
+        asideUptime.Anchor = AnchorStyles.Right;
+        asideUptime.Font = DeckTheme.MonoSmall;
+        asideUptime.ForeColor = DeckTheme.Dim;
+        row.Controls.Add(asideUptime, 2, 0);
+        return row;
     }
 
-    private Control ChannelCard()
+    private Control ReadinessCard()
     {
-        var card = Card("通道", out var body);
-
-        var configure = DeckTheme.Button("配置云服务器", primary: true);
-        configure.Margin = Padding.Empty;
-        configure.Anchor = AnchorStyles.None;
-        configure.MinimumSize = new Size(0, 30);
-        configure.Click += async (_, _) => await RunActionAsync(ConfigureRelayAsync);
-
-        // Hero: state word, endpoint and the one action that changes the state,
-        // on the same line. The action used to sit at the bottom of a tall card,
-        // hundreds of pixels away from the status it acts on.
-        var hero = new TableLayoutPanel
+        var check = DeckTheme.Link("重新检查", DeckTheme.LinkColor);
+        check.Click += async (_, _) =>
         {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 3, RowCount = 1
+            await RunActionAsync(() => DetectToolsAsync(fill: true, quiet: true));
+            RefreshStatePage();
         };
-        hero.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
-        hero.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        hero.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        hero.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        channelDot.Dock = DockStyle.None;
-        channelDot.Anchor = AnchorStyles.Left;
-        channelDot.Margin = new Padding(0, 2, 0, 0);
-        hero.Controls.Add(channelDot, 0, 0);
-        var titleLine = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 2, RowCount = 1
-        };
-        titleLine.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        titleLine.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        titleLine.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        channelTitle.AutoSize = true;
-        channelTitle.Dock = DockStyle.None;
-        channelTitle.Margin = new Padding(0, 0, 12, 0);
-        titleLine.Controls.Add(channelTitle, 0, 0);
-        channelAddr.AutoEllipsis = true;
-        channelAddr.TextAlign = ContentAlignment.MiddleLeft;
-        titleLine.Controls.Add(channelAddr, 1, 0);
-        hero.Controls.Add(titleLine, 1, 0);
-        hero.Controls.Add(configure, 2, 0);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 10);
-        DeckTheme.Row(body, hero, 38);
-        DeckTheme.Row(body, channelSince, 24);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 12);
+        var header = DeckTheme.CardHeaderWith("就绪度", null, [readyPass, readyPending], check);
 
+        var body = DeckTheme.Table(new Padding(16, 0, 16, 6), DeckTheme.Surface);
+        DeckTheme.Row(body, header, 42);
+        DeckTheme.Row(body, ReadyRow("中枢通道", readyChannelValue, readyChannelSub,
+            Link("日志", () => status.Text = connectionEvents.FirstOrDefault() ?? "还没有连接事件。"),
+            Link("重新检查", () => RefreshStatePage())), 62);
         DeckTheme.Row(body, DeckTheme.Divider(), 1);
-        var metrics = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 5, RowCount = 1
-        };
-        metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
-        metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1));
-        metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 33));
-        metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 1));
-        metrics.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 34));
-        metrics.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        metrics.Controls.Add(Metric("已运行", metricUptime), 0, 0);
-        var div1 = DeckTheme.Divider();
-        div1.Margin = new Padding(0, 12, 0, 10);
-        metrics.Controls.Add(div1, 1, 0);
-        var middle = Metric("设备 ID", metricDevice);
-        middle.Margin = new Padding(16, 0, 0, 0);
-        metrics.Controls.Add(middle, 2, 0);
-        var div2 = DeckTheme.Divider();
-        div2.Margin = new Padding(0, 12, 0, 10);
-        metrics.Controls.Add(div2, 3, 0);
-        var last = Metric("注册于", metricRegistered);
-        last.Margin = new Padding(16, 0, 0, 0);
-        metrics.Controls.Add(last, 4, 0);
-        DeckTheme.Row(body, metrics, 72);
-
+        DeckTheme.Row(body, ReadyRow("引擎", readyEngineValue, readyEngineSub,
+            Link("去处理", () => OpenSettingsTab(1)),
+            Link("重新检测", () => _ = RunActionAsync(() => DetectToolsAsync(fill: true)))), 62);
         DeckTheme.Row(body, DeckTheme.Divider(), 1);
-        DeckTheme.Row(body, DeckTheme.Caption("三种状态的含义"), 34);
-        DeckTheme.Row(body, Legend("已就绪", DeckTheme.Good, "Agent 正在运行且已注册，手机此刻可以提交任务"), 28);
-        DeckTheme.Row(body, Legend("已停止", DeckTheme.Warning, "进程已退出，先重启托盘，再检查 Codex 是否可用"), 28);
-        DeckTheme.Row(body, Legend("未注册", DeckTheme.Dim, "还没有 Relay 身份，配置云服务器后手机才能连接"), 28);
+        DeckTheme.Row(body, ReadyRow("项目", readyProjectValue, readyProjectSub,
+            Link("管理项目", () => SelectPage(2))), 62);
+        DeckTheme.Row(body, DeckTheme.Divider(), 1);
+        DeckTheme.Row(body, ReadyRow("配对", readyPairValue, readyPairSub,
+            Link("管理", () => OpenSettingsTab(2))), 62);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 100, fill: true);
 
+        var card = new DeckTheme.CardPanel();
+        card.Controls.Add(body);
         return card;
     }
 
-    private Control StateMain()
+    private static Button Link(string text, Action action)
     {
-        var main = DeckTheme.Table(background: DeckTheme.Canvas);
-        DeckTheme.Row(main, ChannelCard(), 332);
-        DeckTheme.Row(main, new Panel { BackColor = DeckTheme.Canvas }, 16);
-        DeckTheme.Row(main, EventsCard(), 100, fill: true);
-        return main;
+        var button = DeckTheme.Link(text, DeckTheme.LinkColor);
+        button.Margin = new Padding(10, 0, 0, 0);
+        button.Click += (_, _) => action();
+        return button;
     }
 
-    private Control EventsCard()
+    private static Control ReadyRow(string key, Label value, Label sub, params Control[] actions)
     {
-        var card = Card("最近连接事件", out var body, note: "只保留最近 4 条");
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 2);
-        DeckTheme.Row(body, eventList, 100, fill: true);
-        return card;
-    }
-
-    private Control StateSide()
-    {
-        var side = DeckTheme.Table(background: DeckTheme.Canvas);
-        DeckTheme.Row(side, IdentityCard(), 196);
-        DeckTheme.Row(side, new Panel { BackColor = DeckTheme.Canvas }, 16);
-        DeckTheme.Row(side, PairedCard(), 100, fill: true);
-        return side;
-    }
-
-    private Control IdentityCard()
-    {
-        var card = Card("本机身份", out var body, note: "用于手机识别这台电脑");
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 4);
-        var rows = new (string Caption, Label Value)[]
+        var row = new TableLayoutPanel
         {
-            ("计算机名", identityMachine), ("设备 ID", identityDevice),
-            ("注册于", identityRegistered), ("Relay", identityRelay)
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 3, RowCount = 2
         };
-        for (int index = 0; index < rows.Length; index++)
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        row.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
+        row.RowStyles.Add(new RowStyle(SizeType.Absolute, 20));
+
+        // The design aligns the key with the first line of the value, not with
+        // the middle of the two-line block. Same cell, same alignment, so the
+        // baselines line up whatever the font does at runtime.
+        var caption = DeckTheme.Label(key, DeckTheme.Small, DeckTheme.Dim);
+        row.Controls.Add(caption, 0, 0);
+
+        value.AutoEllipsis = true;
+        value.Margin = Padding.Empty;
+        row.Controls.Add(value, 1, 0);
+        sub.AutoEllipsis = true;
+        row.Controls.Add(sub, 1, 1);
+
+        if (actions.Length > 0)
         {
-            var (caption, value) = rows[index];
-            var row = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-                ColumnCount = 2, RowCount = 1
-            };
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
-            row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            row.Controls.Add(DeckTheme.Label(caption, DeckTheme.Small, DeckTheme.Dim), 0, 0);
-            value.AutoEllipsis = true;
-            value.TextAlign = ContentAlignment.MiddleRight;
-            row.Controls.Add(value, 1, 0);
-            DeckTheme.Row(body, row, 33);
-            if (index < rows.Length - 1) DeckTheme.Row(body, DeckTheme.Divider(), 1);
+            var strip = DeckTheme.Inline(actions, gap: 12);
+            strip.Anchor = AnchorStyles.Right;
+            row.Controls.Add(strip, 2, 0);
         }
+        return row;
+    }
+
+    private Control ServiceIdentityCard()
+    {
+        var qr = DeckTheme.Link("显示配对二维码", DeckTheme.LinkColor);
+        qr.Click += async (_, _) => await RunActionAsync(PairPhoneAsync);
+        var manage = DeckTheme.Link("管理配对", DeckTheme.Dim);
+        manage.Click += (_, _) => OpenSettingsTab(2);
+        var header = DeckTheme.CardHeader("服务与身份", null, null, manage, qr);
+
+        var body = DeckTheme.Table(new Padding(16, 0, 16, 12), DeckTheme.Surface);
+        DeckTheme.Row(body, header, 42);
+        var grid = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 2
+        };
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        grid.Controls.Add(Kv("服务模式", serviceModeValue), 0, 0);
+        grid.Controls.Add(Kv("Relay 地址", serviceRelayValue), 1, 0);
+        grid.Controls.Add(Kv("设备 ID", serviceDeviceValue), 0, 1);
+        grid.Controls.Add(Kv("上次上线", serviceSinceValue), 1, 1);
+        DeckTheme.Row(body, grid, 100, fill: true);
+
+        var card = new DeckTheme.CardPanel();
+        card.Controls.Add(body);
         return card;
+    }
+
+    private static Control Kv(string caption, Label value)
+    {
+        var table = DeckTheme.Table(new Padding(0, 8, 12, 6), DeckTheme.Surface);
+        DeckTheme.Row(table, DeckTheme.Caption(caption), 18);
+        value.AutoEllipsis = true;
+        DeckTheme.Row(table, value, 22);
+        return table;
+    }
+
+    private void RefreshStatePage()
+    {
+        bool registered = DeviceRegistered;
+        // Two ways to be reachable: the process this window started, or the
+        // service that starts before anyone logs in. Only the first has an
+        // uptime this window can measure.
+        bool child = agent is { HasExited: false };
+        var service = ServiceControl.Query();
+        bool running = child || service.Running;
+        var id = DeviceIdText();
+        var shortId = DeviceShort(id);
+        var uptime = child ? DateTime.Now - agent!.StartTime : TimeSpan.Zero;
+        var phones = TrustedPhones().ToList();
+
+        topBar.Host = Environment.MachineName;
+        topBar.Device = registered ? shortId : "";
+        topBar.State = running ? "AGENT 运行中" : registered ? "AGENT 未运行" : "未注册";
+        topBar.StateColor = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
+
+        statusDevice.Text = registered ? shortId : "";
+        statusService.Text = running ? "服务 · 运行中" : registered ? "服务 · 已停止" : "服务 · 未注册";
+        statusService.ForeColor = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
+        rail.StatusColor = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
+
+        // 通道
+        readyChannelOk = running;
+        readyChannelValue.Text = running ? "已连通" : registered ? "已停止" : "未注册";
+        readyChannelValue.ForeColor = running ? DeckTheme.Ink : DeckTheme.Muted;
+        var relay = RelayEndpoint();
+        readyChannelSub.Text = running
+            ? $"{(relay.Length > 0 ? relay : "尚未配置 Relay")} · " +
+              $"{(child ? $"进程已运行 {FormatSpan(uptime)}" : "由 Windows 服务托管")}"
+            : registered ? "Agent 未运行，手机此刻连不上。重启托盘或启动服务。" : "先配置 Relay 地址与注册令牌，手机才能连接。";
+
+        // 引擎
+        var codex = codexLine.Text;
+        readyEngineOk = codexVersion.Length > 0;
+        readyEngineValue.Text = readyEngineOk ? $"Codex {codexVersion} 就绪"
+            : codex == "尚未检测" ? "正在检测…" : "Codex 不可用";
+        readyEngineValue.ForeColor = readyEngineOk ? DeckTheme.Ink : DeckTheme.Warning;
+        var cursor = cursorLine.Text;
+        var buddy = buddyLine.Text;
+        readyEngineSub.Text = $"Cursor {(cursor == "尚未检测" ? "未检测" : cursor)} · " +
+                              $"WorkBuddy {(buddy == "尚未检测" ? "未检测" : buddy)} · 未就绪的引擎不会出现在手机端";
+
+        // 项目
+        var (total, enabled) = PolicyCounts();
+        readyProjectOk = enabled > 0;
+        readyProjectValue.Text = $"{total} 个目录 · {enabled} 个启用";
+        readyProjectValue.ForeColor = readyProjectOk ? DeckTheme.Ink : DeckTheme.Warning;
+        readyProjectSub.Text = readyProjectOk
+            ? "手机只能看到启用中的项目；越界写入会被拒绝并记录。"
+            : "还没有启用任何项目，手机提交不了任务。去「项目」页添加一个目录。";
+
+        // 配对
+        readyPairOk = phones.Count > 0;
+        readyPairValue.Text = phones.Count == 0 ? "没有已授权的手机" : $"{phones.Count} 台手机已授权";
+        readyPairValue.ForeColor = readyPairOk ? DeckTheme.Ink : DeckTheme.Warning;
+        readyPairSub.Text = phones.Count == 0
+            ? "点「显示配对二维码」，用手机扫码后在本机确认。"
+            : $"{ShortFingerprint(phones[0].Fingerprint)} · {phones[0].At:MM-dd HH:mm} 配对 · 撤销后立即断连";
+
+        var pass = new[] { readyChannelOk, readyEngineOk, readyProjectOk, readyPairOk }.Count(ok => ok);
+        // The design keeps "N 项通过" green even when something else is missing:
+        // green means "these four, this many are fine", amber carries the gap.
+        readyPass.Text = $"{pass} 项通过";
+        readyPass.Tone = pass > 0 ? DeckTheme.PillTone.Good : DeckTheme.PillTone.Neutral;
+        readyPending.Text = $"{4 - pass} 项待处理";
+        readyPending.Tone = pass == 4 ? DeckTheme.PillTone.Neutral : DeckTheme.PillTone.Warning;
+
+        // 服务与身份
+        serviceModeValue.Text = service.Installed
+            ? service.Running ? "Windows 服务 · 自动启动" : "Windows 服务 · 已安装，未运行"
+            : "托盘进程 · 登录后启动";
+        serviceRelayValue.Text = relay.Length > 0 ? relay : "—";
+        serviceDeviceValue.Text = registered ? shortId : "未注册";
+        serviceSinceValue.Text = child
+            ? $"本次运行 {FormatSpan(uptime)}"
+            : service.Running ? "由服务托管，登录前即可上线" : "—";
+
+        asideVersion.Text = codexVersion is { Length: > 0 } version ? version : "—";
+        asideUptime.Text = child ? FormatSpan(uptime) : running ? "服务托管" : "未运行";
+
+        pair.Enabled = registered;
+        pairHint.Text = registered ? "同一时间只允许一个配对请求" : "配置云服务器后才能配对";
+        RefreshPaired();
+    }
+
+    private (int Total, int Enabled) PolicyCounts()
+    {
+        int total = 0, enabled = 0;
+        try
+        {
+            if (!File.Exists(ProjectsPath)) return (0, 0);
+            using var document = JsonDocument.Parse(File.ReadAllText(ProjectsPath));
+            if (!document.RootElement.TryGetProperty("projects", out var list) ||
+                list.ValueKind != JsonValueKind.Array) return (0, 0);
+            foreach (var entry in list.EnumerateArray())
+            {
+                total++;
+                if (entry.TryGetProperty("enabled", out var flag) && flag.ValueKind == JsonValueKind.True)
+                    enabled++;
+            }
+        }
+        catch (Exception error) when (error is IOException or JsonException) { }
+        return (total, enabled);
     }
 
     private Control PairedCard()
@@ -271,7 +368,9 @@ internal sealed partial class ReviewWindow
         };
         steps.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         steps.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 22));
-        steps.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 322));
+        // 322px clipped the third step to "…再点确..": the line needs 300px of text
+        // plus the number column, and an ellipsis in an instruction is a dead end.
+        steps.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 372));
         steps.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
         string[] lines =
         [
@@ -290,71 +389,6 @@ internal sealed partial class ReviewWindow
             steps.Controls.Add(text, 2, index);
         }
         return steps;
-    }
-
-    private void RefreshStatePage()
-    {
-        bool registered = DeviceRegistered;
-        // Two ways to be reachable: the process this window started, or the
-        // service that starts before anyone logs in. Only the first has an
-        // uptime this window can measure.
-        bool child = agent is { HasExited: false };
-        var service = ServiceControl.Query();
-        bool running = child || service.Running;
-        var id = DeviceIdText();
-        var shortId = DeviceShort(id);
-        var uptime = child ? DateTime.Now - agent!.StartTime : TimeSpan.Zero;
-
-        topBar.Host = Environment.MachineName;
-        topBar.Device = registered ? shortId : "";
-        topBar.State = running ? "AGENT 运行中" : registered ? "AGENT 未运行" : "未注册";
-        topBar.StateColor = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
-
-        statusDevice.Text = registered ? shortId : "";
-        statusService.Text = running ? "服务 · 运行中" : registered ? "服务 · 已停止" : "服务 · 未注册";
-        statusService.ForeColor = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
-        rail.StatusColor = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
-
-        channelDot.Color = running ? DeckTheme.Good : registered ? DeckTheme.Warning : DeckTheme.Dim;
-        channelTitle.Text = running ? "已就绪" : registered ? "已停止" : "未注册";
-        channelAddr.Text = RelayEndpoint() is { Length: > 0 } url ? url : "尚未配置 Relay";
-        channelSince.Text = child
-            ? $"Agent 进程已运行 {FormatSpan(uptime)} · 退出后手机立即断开"
-            : service.Running ? "由 Windows 服务托管 · 登录前也能连接"
-            : registered ? "Agent 未运行。重启托盘后会重新连接。" : "先配置 Relay 地址与注册令牌，手机才能连接。";
-
-        SetMetric(metricUptime, child ? FormatSpan(uptime) : running ? "服务托管" : "未运行", !running);
-        SetMetric(metricDevice, registered ? shortId : "未注册", !registered);
-        SetMetric(metricRegistered,
-            RegisteredAt() is { } at ? at.ToString("MM-dd HH:mm") : "未注册", RegisteredAt() is null);
-        asideVersion.Text = codexVersion is { Length: > 0 } version ? version : "—";
-        asideUptime.Text = child ? FormatSpan(uptime) : running ? "服务托管" : "未运行";
-
-        SetValue(identityMachine, Environment.MachineName);
-        SetValue(identityDevice, registered ? shortId : "未注册");
-        SetValue(identityRegistered, RegisteredAt() is { } when ? when.ToString("yyyy-MM-dd HH:mm") : "—");
-        SetValue(identityRelay, RelayEndpoint() is { Length: > 0 } endpoint ? endpoint : "—");
-
-        pair.Enabled = registered;
-        pairHint.Text = registered ? "同一时间只允许一个配对请求" : "配置云服务器后才能配对";
-        RefreshPaired();
-        RefreshEvents();
-    }
-
-    // A missing value reads as a label ("未注册"), not an em dash: three long
-    // dashes in a row looked like rules drawn under the captions. Real values
-    // take Ink so the numbers carry the eye; placeholders drop to Dim.
-    private static void SetMetric(Label label, string text, bool placeholder)
-    {
-        label.Text = text;
-        label.ForeColor = placeholder ? DeckTheme.Dim : DeckTheme.Ink;
-        label.Font = DeckTheme.MonoHero;
-    }
-
-    private static void SetValue(Label label, string text)
-    {
-        label.Text = text;
-        label.ForeColor = text is "—" or "未注册" or "" ? DeckTheme.Dim : DeckTheme.Ink;
     }
 
     private void RefreshPaired()
@@ -381,9 +415,9 @@ internal sealed partial class ReviewWindow
             row.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
             var who = DeckTheme.Label(ShortFingerprint(phone.Fingerprint), DeckTheme.Monospace, DeckTheme.Ink);
             row.Controls.Add(who, 0, 0);
-            var live = DeckTheme.Chip("已信任", DeckTheme.Good);
+            var live = DeckTheme.Pill("已信任", DeckTheme.PillTone.Good, dot: true);
             live.Anchor = AnchorStyles.Right;
-            live.Margin = new Padding(12, 1, 0, 0);
+            live.Margin = new Padding(12, 0, 0, 0);
             row.Controls.Add(live, 1, 0);
             // The trust file is the whole authorization, so removing it is the
             // revocation: the Agent refuses this phone on its next request.
@@ -440,33 +474,11 @@ internal sealed partial class ReviewWindow
         SetStatus("已撤销手机配对，该手机需要重新扫码。");
     }
 
+    // The event feed moved to the 诊断 tab; the tray still records events, so the
+    // refresh hook stays and forwards to the one label that shows them.
     private void RefreshEvents()
     {
-        // Width participates in the signature: wrapping depends on it, and the
-        // first pass runs before the card has its final size.
-        var signature = $"{eventList.ClientSize.Width}|{string.Join("|", connectionEvents.Take(4))}";
-        if (signature == eventSignature) return;
-        eventSignature = signature;
-        eventList.SuspendLayout();
-        eventList.Controls.Clear();
-        if (connectionEvents.Count == 0)
-        {
-            var empty = DeckTheme.Label("暂无事件。注册、启动、配对都会记在这里。", DeckTheme.Small, DeckTheme.Dim);
-            empty.AutoSize = true;
-            empty.Margin = new Padding(0, 6, 0, 0);
-            eventList.Controls.Add(empty);
-        }
-        foreach (var line in connectionEvents.Take(4))
-        {
-            var entry = DeckTheme.Label(line, DeckTheme.MonoSmall, DeckTheme.Dim);
-            entry.AutoSize = true;
-            // Enrollment failures carry server answers that are longer than this
-            // column, so wrap instead of clipping the half that explains why.
-            entry.MaximumSize = new Size(Math.Max(120, eventList.ClientSize.Width - 2), 0);
-            entry.Margin = new Padding(0, 0, 0, 6);
-            eventList.Controls.Add(entry);
-        }
-        eventList.ResumeLayout();
+        if (settingsPanes.Count > 3) RefreshDiagnostics();
     }
 
     private void RecordEvent(string text)

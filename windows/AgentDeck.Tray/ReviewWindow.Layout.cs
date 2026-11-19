@@ -37,13 +37,30 @@ internal sealed partial class ReviewWindow
         ClientSize = new Size(1120, 720);
         StartPosition = FormStartPosition.CenterScreen;
 
-        var shell = DeckTheme.Table(background: DeckTheme.Canvas);
-        DeckTheme.Row(shell, TopBar(), 44);
-        DeckTheme.Row(shell, Body(), 100, fill: true);
-        DeckTheme.Row(shell, StatusBar(), 34);
+        // v3 layout: the rail runs the full height and carries the brand, while the
+        // top bar spans only the main column. The old shell put a full-width bar
+        // above a 56px icon strip, which read as a toolbar plus a mystery column.
+        var shell = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Canvas, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 1
+        };
+        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 198));
+        shell.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        shell.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var main = DeckTheme.Table(background: DeckTheme.Canvas);
+        DeckTheme.Row(main, TopBar(), 52);
+        DeckTheme.Row(main, content, 100, fill: true);
+        DeckTheme.Row(main, StatusBar(), 34);
+
+        shell.Controls.Add(rail, 0, 0);
+        shell.Controls.Add(main, 1, 0);
         Controls.Add(shell);
         AddPage(StatePage());
         AddPage(TasksPage());
+        AddPage(ProjectsPage());
+        AddPage(LogsPage());
         AddPage(SettingsPage());
         rail.TabSelected += SelectPage;
 
@@ -75,21 +92,6 @@ internal sealed partial class ReviewWindow
         return bar;
     }
 
-    private Control Body()
-    {
-        var body = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Canvas, Margin = Padding.Empty,
-            ColumnCount = 2, RowCount = 1
-        };
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 56));
-        body.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        body.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        body.Controls.Add(rail, 0, 0);
-        body.Controls.Add(content, 1, 0);
-        return body;
-    }
-
     private Control StatusBar()
     {
         var bar = new Panel { Dock = DockStyle.Fill, BackColor = DeckTheme.Bar, Margin = Padding.Empty };
@@ -106,23 +108,28 @@ internal sealed partial class ReviewWindow
 
         statusService.AutoSize = true;
         statusService.Dock = DockStyle.None;
+        // Anchor=Left centres the label in the 34px bar; the default Top|Left
+        // pinned it to the top edge, visibly above the status text next to it.
+        statusService.Anchor = AnchorStyles.Left;
         statusService.Margin = new Padding(0, 0, 22, 0);
         grid.Controls.Add(statusService, 0, 0);
         status.AutoEllipsis = true;
+        // A 34px bar holds one line. AutoSize let a long error wrap to a second
+        // line that was then clipped by the bar itself, so the label is pinned
+        // to the cell and ends in an ellipsis instead.
+        status.AutoSize = false;
+        status.Dock = DockStyle.Fill;
+        status.TextAlign = ContentAlignment.MiddleLeft;
         grid.Controls.Add(status, 1, 0);
 
-        var right = new FlowLayoutPanel
-        {
-            AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, BackColor = DeckTheme.Bar,
-            Margin = Padding.Empty, FlowDirection = FlowDirection.LeftToRight
-        };
-        foreach (var label in new[] { statusPending, statusCodex, statusDevice })
+        Control[] rightItems = [statusPending, statusCodex, statusDevice];
+        foreach (var label in rightItems)
         {
             label.AutoSize = true;
             label.Dock = DockStyle.None;
-            label.Margin = new Padding(0, 0, 20, 0);
-            right.Controls.Add(label);
         }
+        var right = DeckTheme.Inline(rightItems, gap: 20);
+        right.Anchor = AnchorStyles.Right;
         grid.Controls.Add(right, 2, 0);
         bar.Controls.Add(grid);
         return bar;
@@ -157,9 +164,16 @@ internal sealed partial class ReviewWindow
         page.Visible = false;
     }
 
+    /// <summary>QA hook: jump straight to a page so a screenshot needs no click.</summary>
+    internal void OpenPage(int index) => SelectPage(index);
+
     private void SelectPage(int index)
     {
         if (index < 0 || index >= pages.Count) return;
+        // 项目与日志是磁盘的镜像。进页时重读一次，而不是常驻刷新：常驻刷新会让
+        // 「刚在别处改过授权清单」这件事出现两个真相。
+        if (index == 2) RefreshProjectsPage();
+        else if (index == 3) RefreshLogsPage();
         content.SuspendLayout();
         for (int i = 0; i < pages.Count; i++) pages[i].Visible = i == index;
         rail.SelectedIndex = index;
@@ -296,67 +310,45 @@ internal sealed partial class ReviewWindow
             g.SmoothingMode = SmoothingMode.AntiAlias;
             using (var background = new SolidBrush(DeckTheme.Bar)) g.FillRectangle(background, ClientRectangle);
 
-            var mark = new Rectangle(16, (Height - 14) / 2, 14, 14);
-            using (var path = DeckTheme.Rounded(mark, 3))
-            using (var fill = new LinearGradientBrush(mark, DeckTheme.Accent, Color.FromArgb(138, 101, 25), 45f))
-                g.FillPath(fill, path);
-            // The same chevron the tray icon carries: without it the mark reads
-            // as a coloured placeholder box rather than a logo.
-            using (var glyph = new Pen(DeckTheme.AccentInk, 2f)
-                   {
-                       StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round
-                   })
-                g.DrawLines(glyph,
-                [
-                    new PointF(mark.X + 5.0f, mark.Y + 4.2f),
-                    new PointF(mark.X + 9.2f, mark.Y + 7.0f),
-                    new PointF(mark.X + 5.0f, mark.Y + 9.8f)
-                ]);
+            // The brand lives in the rail now, where the design puts it. This bar
+            // carries connection state on the left and machine identity on the
+            // right; the old version ran logo + host + device + state across one
+            // 44px strip, which made the top bar the busiest line in the window.
+            int left = 18;
+            if (state.Length > 0)
+            {
+                int cy = Height / 2;
+                using (var halo = new SolidBrush(Color.FromArgb(38, stateColor)))
+                    g.FillEllipse(halo, left - 1, cy - 5, 10, 10);
+                using (var core = new SolidBrush(stateColor))
+                    g.FillEllipse(core, left + 1, cy - 3, 6, 6);
+                left += 15;
+                TextRenderer.DrawText(g, state, DeckTheme.Body,
+                    new Rectangle(left, 0, 280, Height), stateColor,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            }
 
-            int x = mark.Right + 9;
-            TextRenderer.DrawText(g, "AGENTDECK", DeckTheme.Brand,
-                new Rectangle(x, 0, 120, Height), DeckTheme.Ink,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-            x += TextRenderer.MeasureText(g, "AGENTDECK", DeckTheme.Brand, Size.Empty,
-                TextFormatFlags.NoPadding).Width + 15;
-
-            using (var pen = new Pen(DeckTheme.Line))
-                g.DrawLine(pen, x, 13, x, Height - 13);
-            x += 15;
-
-            TextRenderer.DrawText(g, host, DeckTheme.Body,
-                new Rectangle(x, 0, 240, Height), DeckTheme.Muted,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding |
-                TextFormatFlags.EndEllipsis);
-            x += TextRenderer.MeasureText(g, host, DeckTheme.Body, Size.Empty,
-                TextFormatFlags.NoPadding).Width + 10;
-
-            TextRenderer.DrawText(g, device, DeckTheme.MonoSmall,
-                new Rectangle(x, 0, 120, Height), DeckTheme.Dim,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-
-            if (state.Length == 0) return;
-            int stateWidth = TextRenderer.MeasureText(g, state, DeckTheme.MonoSmall, Size.Empty,
+            var meta = device.Length == 0 ? host : host + " · " + device;
+            if (meta.Length == 0) return;
+            int metaWidth = TextRenderer.MeasureText(g, meta, DeckTheme.MonoSmall, Size.Empty,
                 TextFormatFlags.NoPadding).Width;
-            int stateLeft = Width - 16 - stateWidth;
-            TextRenderer.DrawText(g, state, DeckTheme.MonoSmall,
-                new Rectangle(stateLeft, 0, stateWidth, Height), stateColor,
+            TextRenderer.DrawText(g, meta, DeckTheme.MonoSmall,
+                new Rectangle(Width - 18 - metaWidth, 0, metaWidth, Height), DeckTheme.Dim,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-            int cy = Height / 2;
-            using (var halo = new SolidBrush(Color.FromArgb(40, stateColor)))
-                g.FillEllipse(halo, stateLeft - 16, cy - 5, 10, 10);
-            using (var core = new SolidBrush(stateColor))
-                g.FillEllipse(core, stateLeft - 14, cy - 3, 6, 6);
         }
     }
 
-    // Painted navigation rail. Three 36px icon buttons, an amber selection bar
-    // and a badge, all positioned in code instead of through nested layouts.
+    // Painted sidebar. The design gives the rail the full window height and puts
+    // the brand at its top, so this control owns the logo, five labelled items
+    // and the count badge. Painted as one control on purpose: nested panels would
+    // each paint their own background over the hover fill.
     private sealed class RailView : Control
     {
-        private const int PadTop = 12;
-        private const int Step = 42;
-        private const int Box = 36;
+        private const int PadX = 10;
+        private const int NavTop = 64;
+        private const int ItemHeight = 33;
+        private const int ItemGap = 2;
+        private static readonly string[] Labels = ["主机", "任务", "项目", "日志", "设置"];
         private int selected;
         private int badge;
         private int hover = -1;
@@ -413,16 +405,15 @@ internal sealed partial class ReviewWindow
 
         private int HitTest(Point point)
         {
-            for (int index = 0; index < 3; index++)
+            for (int index = 0; index < Labels.Length; index++)
             {
-                var box = ItemBounds(index);
-                if (box.Contains(point)) return index;
+                if (ItemBounds(index).Contains(point)) return index;
             }
             return -1;
         }
 
         private Rectangle ItemBounds(int index) =>
-            new((Width - Box) / 2, PadTop + index * Step, Box, Box);
+            new(PadX, NavTop + index * (ItemHeight + ItemGap), Width - PadX * 2, ItemHeight);
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
@@ -457,42 +448,78 @@ internal sealed partial class ReviewWindow
             using (var edge = new Pen(DeckTheme.Line))
                 g.DrawLine(edge, Width - 1, 0, Width - 1, Height);
 
-            for (int index = 0; index < 3; index++)
+            DrawBrand(g);
+
+            for (int index = 0; index < Labels.Length; index++)
             {
                 var box = ItemBounds(index);
                 if (index == selected || index == hover)
                 {
-                    using var path = DeckTheme.Rounded(box, 8);
-                    using var fill = new SolidBrush(index == selected ? DeckTheme.Surface2 : DeckTheme.Line2);
+                    using var path = DeckTheme.Rounded(box, 6);
+                    // Bar and Surface2 are the same #fafbfc now, so a "surface" fill
+                    // would make the selected row invisible against the rail.
+                    using var fill = new SolidBrush(index == selected ? DeckTheme.Selected : DeckTheme.Active);
                     g.FillPath(fill, path);
                 }
-                if (index == selected)
+
+                var color = index == selected ? DeckTheme.Ink : DeckTheme.Muted;
+                var icon = new Rectangle(box.X + 9, box.Y + (ItemHeight - 16) / 2, 16, 16);
+                DrawIcon(g, index, icon, color);
+                TextRenderer.DrawText(g, Labels[index], DeckTheme.Body,
+                    new Rectangle(icon.Right + 9, box.Y, box.Width - 62, ItemHeight), color,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding |
+                    TextFormatFlags.EndEllipsis);
+
+                if (index == 1 && badge > 0)
                 {
-                    using var path = DeckTheme.Rounded(new RectangleF(4, box.Top + 9, 2, Box - 18), 1);
-                    using var fill = new SolidBrush(DeckTheme.Accent);
+                    var text = badge > 9 ? "9+" : badge.ToString();
+                    int width = text.Length > 1 ? 20 : 17;
+                    var pill = new Rectangle(box.Right - width - 8, box.Y + (ItemHeight - 16) / 2, width, 16);
+                    using var path = DeckTheme.Rounded(pill, 8);
+                    using var fill = new SolidBrush(DeckTheme.Badge);
                     g.FillPath(fill, path);
+                    TextRenderer.DrawText(g, text, DeckTheme.MonoMicro, pill, DeckTheme.Muted,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
                 }
-                DrawIcon(g, index, box, index == selected ? DeckTheme.Ink : DeckTheme.Dim);
             }
 
-            if (badge > 0)
-            {
-                var box = ItemBounds(1);
-                var text = badge > 9 ? "9+" : badge.ToString();
-                int width = text.Length > 1 ? 20 : 15;
-                var pill = new Rectangle(box.Right - width + 3, box.Top - 3, width, 15);
-                using var path = DeckTheme.Rounded(pill, 7);
-                using var fill = new SolidBrush(DeckTheme.Accent);
-                g.FillPath(fill, path);
-                TextRenderer.DrawText(g, text, DeckTheme.MonoMicro, pill, DeckTheme.AccentInk,
-                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
-            }
-
-            int cy = Height - 18;
-            using (var halo = new SolidBrush(Color.FromArgb(40, statusColor)))
-                g.FillEllipse(halo, Width / 2f - 5, cy - 4, 10, 10);
+            // Heartbeat only. The words already live in the top bar, and repeating
+            // them down here would make one state look like two.
+            int cy = Height - 20;
+            int cx = PadX + 9;
+            using (var halo = new SolidBrush(Color.FromArgb(38, statusColor)))
+                g.FillEllipse(halo, cx - 1, cy - 4, 10, 10);
             using (var core = new SolidBrush(statusColor))
-                g.FillEllipse(core, Width / 2f - 3, cy - 2, 6, 6);
+                g.FillEllipse(core, cx + 1, cy - 2, 6, 6);
+        }
+
+        private void DrawBrand(Graphics g)
+        {
+            var mark = new Rectangle(16, 16, 24, 24);
+            using (var path = DeckTheme.Rounded(mark, 7))
+            using (var fill = new SolidBrush(DeckTheme.Accent))
+                g.FillPath(fill, path);
+            // Same chevron as the tray icon: without it the mark reads as a
+            // coloured placeholder square rather than a logo.
+            using (var glyph = new Pen(DeckTheme.AccentInk, 2f)
+                   {
+                       StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round
+                   })
+                g.DrawLines(glyph,
+                [
+                    new PointF(mark.X + 8.0f, mark.Y + 7.0f),
+                    new PointF(mark.X + 14.0f, mark.Y + 12.0f),
+                    new PointF(mark.X + 8.0f, mark.Y + 17.0f)
+                ]);
+
+            int x = mark.Right + 9;
+            TextRenderer.DrawText(g, "AgentDeck", DeckTheme.Section,
+                new Rectangle(x, 14, Width - x - 10, 18), DeckTheme.Ink,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding |
+                TextFormatFlags.EndEllipsis);
+            TextRenderer.DrawText(g, "远程控制台", DeckTheme.Tiny,
+                new Rectangle(x, 31, Width - x - 10, 15), DeckTheme.Dim,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
         }
 
         private static void DrawIcon(Graphics g, int index, Rectangle box, Color color)
@@ -518,6 +545,25 @@ internal sealed partial class ReviewWindow
                         g.FillEllipse(dot, cx - 8, y - 1.3f, 2.6f, 2.6f);
                         g.DrawLine(pen, cx - 3.4f, y, cx + 8, y);
                     }
+                    break;
+                case 2:
+                    // Folder: the tab on the top edge is what separates it from the
+                    // task list at 16px. A plain rectangle reads as "page".
+                    g.DrawLines(pen,
+                    [
+                        new PointF(cx - 8, cy + 5.5f), new PointF(cx - 8, cy - 5.5f),
+                        new PointF(cx - 3, cy - 5.5f), new PointF(cx - 1, cy - 3),
+                        new PointF(cx + 8, cy - 3), new PointF(cx + 8, cy + 5.5f),
+                        new PointF(cx - 8, cy + 5.5f)
+                    ]);
+                    break;
+                case 3:
+                    // Document with ruled lines: same family as the task icon, but
+                    // enclosed, so the two are told apart by silhouette.
+                    g.DrawRectangle(pen, cx - 6, cy - 7, 12, 14);
+                    g.DrawLine(pen, cx - 3, cy - 3.5f, cx + 3, cy - 3.5f);
+                    g.DrawLine(pen, cx - 3, cy, cx + 3, cy);
+                    g.DrawLine(pen, cx - 3, cy + 3.5f, cx + 1, cy + 3.5f);
                     break;
                 default:
                     // Sliders, not a gear: a 12px gear needs eight teeth and a

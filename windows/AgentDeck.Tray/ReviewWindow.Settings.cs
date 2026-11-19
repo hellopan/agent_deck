@@ -3,17 +3,19 @@ using System.Text.Json;
 
 namespace AgentDeck.Tray;
 
-// 设置 page: what this machine is allowed to touch, whether it starts with
-// Windows, and which editors were found. There is no path to type: Codex is
-// detected, the project policy is a list, and the only editable value is where
-// task logs go.
+// 设置 page: four tabs over the same cards the tray already owns — 接入 (relay and
+// the Windows service), 引擎 (what is installed), 配对 (the phones that may talk
+// to this machine) and 诊断 (where the logs are). The project whitelist is not
+// here any more: it has its own page, and two editors for one file is how the
+// screen and the disk start disagreeing.
 internal sealed partial class ReviewWindow
 {
-    private readonly WhitelistView projectTable = new()
+    private readonly Panel settingsHost = new()
     {
-        Dock = DockStyle.Fill, Margin = Padding.Empty
+        Dock = DockStyle.Fill, BackColor = DeckTheme.Canvas, Margin = Padding.Empty
     };
-    private readonly Label projectSummary = DeckTheme.Label("0 个目录", DeckTheme.MonoMicro, DeckTheme.Dim);
+    private readonly List<Control> settingsPanes = [];
+    private SettingsTabsView settingsTabs = null!;
     private readonly DeckTheme.StatusDot serviceDot = DeckTheme.Dot(DeckTheme.Dim);
     private readonly Label serviceTitle = DeckTheme.Label("开机自动运行 · 未安装", DeckTheme.Body, DeckTheme.Muted);
     private readonly Label serviceDetail = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
@@ -28,124 +30,128 @@ internal sealed partial class ReviewWindow
     private readonly Label codexPathLine = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
     private readonly Label cursorPathLine = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
     private readonly Label buddyPathLine = DeckTheme.Label("", DeckTheme.Small, DeckTheme.Dim);
+    private readonly Label settingsRelay = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly Label settingsDevice = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly Label settingsProfile = DeckTheme.Label("—", DeckTheme.MonoSmall, DeckTheme.Muted);
+    private readonly Label diagnosticsEvents = DeckTheme.Label("没有记录", DeckTheme.Small, DeckTheme.Muted);
     private readonly TextBox logs = new();
     private string codexVersion = "";
-    private TableLayoutPanel? projectBody;
-    private int projectRulesRow = -1;
 
     private Control SettingsPage()
     {
-        var body = DeckTheme.Table(background: DeckTheme.Canvas);
-        // Fixed rows plus scrolling: at the 900x660 minimum the log field would
-        // otherwise be pushed out of the window, which is exactly the defect the
-        // old five-page settings screen had.
-        body.AutoScroll = true;
-        DeckTheme.Row(body, ProjectCard(), 100, fill: true);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Canvas }, 12);
-        var bottom = new TableLayoutPanel
+        var root = DeckTheme.Table(background: DeckTheme.Canvas);
+        settingsTabs = new SettingsTabsView();
+        settingsTabs.Selected += OpenSettingsTab;
+        DeckTheme.Row(root, settingsTabs, 46);
+        DeckTheme.Row(root, new Panel { BackColor = DeckTheme.Canvas }, 14);
+
+        settingsPanes.Add(AccessPane());
+        settingsPanes.Add(DetectionPane());
+        settingsPanes.Add(PairedCard());
+        settingsPanes.Add(DiagnosticsPane());
+        foreach (var pane in settingsPanes)
         {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Canvas, Margin = Padding.Empty,
-            ColumnCount = 3, RowCount = 1
-        };
-        bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 43));
-        bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 16));
-        bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 57));
-        bottom.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        bottom.Controls.Add(ServiceCard(), 0, 0);
-        bottom.Controls.Add(new Panel { BackColor = DeckTheme.Canvas }, 1, 0);
-        bottom.Controls.Add(DetectionCard(), 2, 0);
-        // 216, not 204: three 44px editor rows plus the header, the spacers and
-        // the hint below them. At 204 the hint spilled out of the card and the
-        // page grew a scrollbar for twelve pixels nobody could see.
-        DeckTheme.Row(body, bottom, 216);        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Canvas }, 12);
-        DeckTheme.Row(body, LogsCard(), 54);
-        var page = Page("设置", "只在这几个目录里工作。其余路径一律拒绝。", body);
+            pane.Visible = false;
+            settingsHost.Controls.Add(pane);
+        }
+        DeckTheme.Row(root, settingsHost, 100, fill: true);
+
+        var page = Page("设置", "接入、引擎、配对与诊断。关闭窗口不影响后台服务，托盘仍在跑。", root);
         page.VisibleChanged += (_, _) => { if (page.Visible) RefreshSettings(); };
+        OpenSettingsTab(0);
         return page;
     }
 
-    private Control ProjectCard()
+    internal void OpenSettingsTab(int index)
     {
-        projectSummary.BackColor = DeckTheme.Surface2;
-        projectSummary.Padding = new Padding(7, 2, 7, 2);
-        projectSummary.AutoSize = true;
-        projectSummary.Dock = DockStyle.None;
-        projectSummary.Anchor = AnchorStyles.Right;
-        DeckTheme.Round(projectSummary, 9);
-        var card = Card("项目白名单", out var body, note: "添加后默认停用", action: projectSummary);
-        projectBody = body;
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 4);
-        DeckTheme.Row(body, projectTable, 100, fill: true);
+        if (index < 0 || index >= settingsPanes.Count) return;
+        for (int i = 0; i < settingsPanes.Count; i++) settingsPanes[i].Visible = i == index;
+        settingsTabs.SelectedIndex = index;
+        if (index == 0)
+        {
+            settingsRelay.Text = RelayEndpoint() is { Length: > 0 } relay ? relay : "尚未配置";
+            settingsDevice.Text = DeviceIdText() is { Length: > 0 } id ? DeviceShort(id) : "未注册";
+            settingsProfile.Text = AgentConfig;
+        }
+        if (index == 3) RefreshDiagnostics();
+        RefreshSettings();
+    }
 
-        // The allow/deny rules are onboarding text: they matter when the list is
-        // empty and cost 59px the rest of the time. Keeping them in their own row
-        // lets RefreshProjects collapse it, which is what gives the table enough
-        // height to show three projects instead of slicing the second one.
-        var rulesBlock = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 1, RowCount = 4
-        };
-        rulesBlock.RowStyles.Add(new RowStyle(SizeType.Absolute, 6));
-        rulesBlock.RowStyles.Add(new RowStyle(SizeType.Absolute, 1));
-        rulesBlock.RowStyles.Add(new RowStyle(SizeType.Absolute, 6));
-        rulesBlock.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
-        rulesBlock.Controls.Add(new Panel { BackColor = DeckTheme.Surface, Dock = DockStyle.Fill, Margin = Padding.Empty }, 0, 0);
-        rulesBlock.Controls.Add(DeckTheme.Divider(DeckTheme.Line), 0, 1);
-        rulesBlock.Controls.Add(new Panel { BackColor = DeckTheme.Surface, Dock = DockStyle.Fill, Margin = Padding.Empty }, 0, 2);
+    private Control AccessPane()
+    {
+        var pane = DeckTheme.Table(background: DeckTheme.Canvas);
+        // A card that is stretched to the pane's height leaves a hand-sized empty
+        // block under its last row; the mock sizes every card to its content.
+        DeckTheme.Row(pane, ServiceCard(), 212);
+        DeckTheme.Row(pane, new Panel { BackColor = DeckTheme.Canvas }, 14);
+        DeckTheme.Row(pane, AccessFactsCard(), 150);
+        DeckTheme.Row(pane, new Panel { BackColor = DeckTheme.Canvas }, 100, fill: true);
+        return pane;
+    }
 
-        var rules = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 2, RowCount = 2, Padding = new Padding(0, 4, 0, 0)
-        };
-        rules.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 40));
-        rules.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        rules.RowStyles.Add(new RowStyle(SizeType.Absolute, 21));
-        rules.RowStyles.Add(new RowStyle(SizeType.Absolute, 21));
-        rules.Controls.Add(RuleKey("允许", DeckTheme.Good), 0, 0);
-        rules.Controls.Add(RuleText("只在启用的目录内读写，子目录继承父目录权限"), 1, 0);
-        rules.Controls.Add(RuleKey("拒绝", DeckTheme.Danger), 0, 1);
-        rules.Controls.Add(RuleText("符号链接、目录联接、含 .. 的越界路径，以及未在清单中的任何路径"), 1, 1);
-        rulesBlock.Controls.Add(rules, 0, 3);
-        projectRulesRow = body.RowCount;
-        DeckTheme.Row(body, rulesBlock, 59);
-
-        var actions = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 2, RowCount = 1, Padding = new Padding(0, 6, 0, 0)
-        };
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        actions.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        actions.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        var hint = DeckTheme.Label("改动对下一次任务生效；写入仍会逐条请求手机批准", DeckTheme.Tiny, DeckTheme.Dim);
-        hint.AutoEllipsis = true;
-        actions.Controls.Add(hint, 0, 0);
-        var buttons = DeckTheme.Actions(DeckTheme.Surface);
-        buttons.AutoSize = true;
-        buttons.Dock = DockStyle.None;
-        buttons.Anchor = AnchorStyles.Right;
-        AddAction(buttons, "管理项目…", ManageProjectsAsync, primary: true);
-        AddAction(buttons, "刷新", () =>
-        {
-            RefreshProjects();
-            return Task.CompletedTask;
-        });
-        actions.Controls.Add(buttons, 1, 0);
-        DeckTheme.Row(body, actions, 42);
+    private Control AccessFactsCard()
+    {
+        var card = Card("本机身份", out var body, note: "手机用这些值认出这台电脑");
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 2);
+        DeckTheme.Row(body, FactRow("Relay 地址", settingsRelay), 34);
+        DeckTheme.Row(body, DeckTheme.Divider(), 1);
+        DeckTheme.Row(body, FactRow("设备 ID", settingsDevice), 34);
+        DeckTheme.Row(body, DeckTheme.Divider(), 1);
+        DeckTheme.Row(body, FactRow("配置文件", settingsProfile), 34);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 100, fill: true);
         return card;
     }
 
-    private static Control RuleKey(string text, Color color) =>
-        DeckTheme.Label(text, DeckTheme.Small, color);
-
-    private static Control RuleText(string text)
+    private static Control FactRow(string caption, Label value)
     {
-        var label = DeckTheme.Label(text, DeckTheme.Small, DeckTheme.Dim);
-        label.AutoEllipsis = true;
-        return label;
+        var row = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 2, RowCount = 1
+        };
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        row.Controls.Add(DeckTheme.Label(caption, DeckTheme.Small, DeckTheme.Dim), 0, 0);
+        value.AutoEllipsis = true;
+        row.Controls.Add(value, 1, 0);
+        return row;
     }
+
+    private Control DiagnosticsPane()
+    {
+        var pane = DeckTheme.Table(background: DeckTheme.Canvas);
+        DeckTheme.Row(pane, LogsCard(), 54);
+        DeckTheme.Row(pane, new Panel { BackColor = DeckTheme.Canvas }, 14);
+        var card = Card("运行记录", out var body, note: "只在本机");
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 2);
+        DeckTheme.Row(body, FactRow("版本", DeckTheme.Label(AppVersion, DeckTheme.MonoSmall, DeckTheme.Muted)), 34);
+        DeckTheme.Row(body, DeckTheme.Divider(), 1);
+        DeckTheme.Row(body, FactRow("日志目录", DeckTheme.Label(LogsPath, DeckTheme.MonoSmall, DeckTheme.Muted)), 34);
+        DeckTheme.Row(body, DeckTheme.Divider(), 1);
+        var events = FactRow("最近事件", diagnosticsEvents);
+        DeckTheme.Row(body, events, 34);
+        var hint = DeckTheme.Label("诊断信息只包含连接、版本与错误摘要，不包含任务正文与凭据。",
+            DeckTheme.Tiny, DeckTheme.Dim);
+        DeckTheme.Row(body, hint, 30);
+        // The spacer goes last: with a fill row before the hint, the hint was
+        // pushed to the bottom of the card, a hundred pixels below the rows it
+        // belongs to.
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 100, fill: true);
+        DeckTheme.Row(pane, card, 214);
+        DeckTheme.Row(pane, new Panel { BackColor = DeckTheme.Canvas }, 100, fill: true);
+        return pane;
+    }
+
+    private void RefreshDiagnostics()
+    {
+        diagnosticsEvents.Text = connectionEvents.FirstOrDefault() ?? "没有记录";
+    }
+
+    private static string AppVersion =>
+        typeof(ReviewWindow).Assembly.GetName().Version is { } version
+            ? $"{version.Major}.{version.Minor}.{version.Build}"
+            : "0.4.0";
 
     private Control ServiceCard()
     {
@@ -169,35 +175,52 @@ internal sealed partial class ReviewWindow
         head.Controls.Add(serviceTitle, 1, 0);
         DeckTheme.Row(body, head, 26);
         serviceDetail.AutoEllipsis = true;
-        serviceDetail.ForeColor = DeckTheme.Muted;
+        serviceDetail.ForeColor = DeckTheme.Dim;
         DeckTheme.Row(body, serviceDetail, 20);
         DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 8);
-        var note1 = DeckTheme.Label("服务模式在登录前就能连接手机；", DeckTheme.Small, DeckTheme.Dim);
+        // These two sentences are a footnote, not a second paragraph: the design
+        // sets them at 11.5px in t3, which is what keeps the card readable.
+        var note1 = DeckTheme.Label("服务模式在登录前就能连接手机；托盘模式需要先登录 Windows。",
+            DeckTheme.Tiny, DeckTheme.Dim);
         note1.AutoEllipsis = true;
         DeckTheme.Row(body, note1, 20);
-        var note2 = DeckTheme.Label("托盘模式需要先登录 Windows。", DeckTheme.Small, DeckTheme.Dim);
-        note2.AutoEllipsis = true;
-        DeckTheme.Row(body, note2, 20);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 8);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 10);
+        DeckTheme.Row(body, DeckTheme.Divider(), 1);
+        // Label over value, two columns: the mock's .kv. Right-aligning a value
+        // against the card edge left it stranded a whole card-width from its key.
         var facts = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 2, RowCount = 2
+            ColumnCount = 2, RowCount = 1
         };
-        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 42));
-        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 58));
-        facts.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-        facts.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
-        facts.Controls.Add(DeckTheme.Label("当前方式", DeckTheme.Small, DeckTheme.Dim), 0, 0);
-        serviceMode.TextAlign = ContentAlignment.MiddleRight;
-        facts.Controls.Add(serviceMode, 1, 0);
-        facts.Controls.Add(DeckTheme.Label("服务名", DeckTheme.Small, DeckTheme.Dim), 0, 1);
+        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        facts.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
+        facts.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         var serviceName = DeckTheme.Label("AgentDeckLab", DeckTheme.MonoSmall, DeckTheme.Muted);
-        serviceName.TextAlign = ContentAlignment.MiddleRight;
-        facts.Controls.Add(serviceName, 1, 1);
-        DeckTheme.Row(body, facts, 44);
+        facts.Controls.Add(KvBlock("当前方式", serviceMode), 0, 0);
+        facts.Controls.Add(KvBlock("服务名", serviceName), 1, 0);
+        DeckTheme.Row(body, facts, 58);
         DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 100, fill: true);
         return card;
+    }
+
+    private static Control KvBlock(string caption, Label value)
+    {
+        var table = DeckTheme.Table(new Padding(0, 4, 12, 2), DeckTheme.Surface);
+        DeckTheme.Row(table, DeckTheme.Caption(caption), 18);
+        value.AutoEllipsis = true;
+        value.Font = DeckTheme.Small;
+        value.ForeColor = DeckTheme.Muted;
+        DeckTheme.Row(table, value, 20);
+        return table;
+    }
+
+    private Control DetectionPane()
+    {
+        var pane = DeckTheme.Table(background: DeckTheme.Canvas);
+        DeckTheme.Row(pane, DetectionCard(), 236);
+        DeckTheme.Row(pane, new Panel { BackColor = DeckTheme.Canvas }, 100, fill: true);
+        return pane;
     }
 
     private Control DetectionCard()
@@ -209,16 +232,46 @@ internal sealed partial class ReviewWindow
         redetect.Margin = Padding.Empty;
         redetect.Anchor = AnchorStyles.Right;
         redetect.Click += async (_, _) => await RunActionAsync(() => DetectToolsAsync(fill: true));
-        var card = Card("编辑器检测", out var body, action: redetect);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 4);
-        DeckTheme.Row(body, EditorRow(codexDot, "Codex", codexLine, codexPathLine, "只读 · 写 · 审批 · 续接"), 44);
-        DeckTheme.Row(body, EditorRow(cursorDot, "Cursor", cursorLine, cursorPathLine, "未接入"), 44);
-        DeckTheme.Row(body, EditorRow(buddyDot, "WorkBuddy", buddyLine, buddyPathLine, "未接入"), 44);
-        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 4);
-        var hint = DeckTheme.Label("路径由 AgentDeck 自动发现，不支持手动指定。", DeckTheme.Tiny, DeckTheme.Dim);
+        var card = Card("引擎", out var body, note: "只探测本机安装与登录状态，不上传路径", action: redetect);
+        DeckTheme.Row(body, EngineHead(), 26);
+        DeckTheme.Row(body, EditorRow(codexDot, "Codex", codexLine, codexPathLine, "只读 · 写 · 审批 · 续接"), 40);
+        DeckTheme.Row(body, DeckTheme.Divider(), 1);
+        DeckTheme.Row(body, EditorRow(cursorDot, "Cursor", cursorLine, cursorPathLine, "未接入"), 40);
+        DeckTheme.Row(body, DeckTheme.Divider(), 1);
+        DeckTheme.Row(body, EditorRow(buddyDot, "WorkBuddy", buddyLine, buddyPathLine, "未接入"), 40);
+        DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 10);
+        var hint = DeckTheme.Label("未就绪的引擎不会出现在手机端的工具列表里。", DeckTheme.Tiny, DeckTheme.Dim);
         DeckTheme.Row(body, hint, 20);
         DeckTheme.Row(body, new Panel { BackColor = DeckTheme.Surface }, 100, fill: true);
         return card;
+    }
+
+    // The engine list is a table in the mock: 引擎 · 版本 · 路径 · 能力 on one line.
+    // Stacking name over path inside a 44px row left the three engines looking like
+    // one paragraph, and put the version against the capability text.
+    private static Control EngineHead()
+    {
+        var row = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
+            ColumnCount = 5, RowCount = 1
+        };
+        foreach (var width in new[] { 14, 92, 140 })
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, width));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        // Column 0 is the status dot's slot. It stays empty here, but it has to be
+        // there: a TableLayoutPanel drops an unoccupied leading column, which moved
+        // every heading 14px left of the value it labels.
+        row.Controls.Add(new Panel { BackColor = DeckTheme.Surface, Margin = Padding.Empty }, 0, 0);
+        row.Controls.Add(DeckTheme.Label("引擎", DeckTheme.Tiny, DeckTheme.Dim), 1, 0);
+        row.Controls.Add(DeckTheme.Label("版本", DeckTheme.Tiny, DeckTheme.Dim), 2, 0);
+        row.Controls.Add(DeckTheme.Label("路径", DeckTheme.Tiny, DeckTheme.Dim), 3, 0);
+        var caps = DeckTheme.Label("能力", DeckTheme.Tiny, DeckTheme.Dim);
+        caps.TextAlign = ContentAlignment.MiddleRight;
+        row.Controls.Add(caps, 4, 0);
+        return row;
     }
 
     private Control LogsCard()
@@ -261,55 +314,46 @@ internal sealed partial class ReviewWindow
         var row = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 3, RowCount = 2
+            ColumnCount = 5, RowCount = 1
         };
-        row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 18));
+        foreach (var width in new[] { 14, 92, 140 })
+            row.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, width));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         row.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        row.RowStyles.Add(new RowStyle(SizeType.Absolute, 21));
-        row.RowStyles.Add(new RowStyle(SizeType.Absolute, 17));
+        row.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
         dot.Dock = DockStyle.None;
         dot.Anchor = AnchorStyles.Left;
-        dot.Margin = new Padding(0, 1, 0, 0);
-        row.SetRowSpan(dot, 2);
+        dot.Margin = Padding.Empty;
         row.Controls.Add(dot, 0, 0);
-        var head = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill, BackColor = DeckTheme.Surface, Margin = Padding.Empty,
-            ColumnCount = 2, RowCount = 1
-        };
-        head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        head.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
         var title = DeckTheme.Label(name, DeckTheme.Body, DeckTheme.Ink);
-        title.AutoSize = true;
-        title.Dock = DockStyle.None;
-        title.Margin = new Padding(0, 0, 8, 0);
-        head.Controls.Add(title, 0, 0);
-        version.TextAlign = ContentAlignment.MiddleRight;
+        title.AutoEllipsis = true;
+        row.Controls.Add(title, 1, 0);
+        version.TextAlign = ContentAlignment.MiddleLeft;
         version.Font = DeckTheme.MonoMicro;
-        head.Controls.Add(version, 1, 0);
-        row.Controls.Add(head, 1, 0);
+        version.AutoEllipsis = true;
+        row.Controls.Add(version, 2, 0);
         path.AutoEllipsis = true;
         path.Font = DeckTheme.Small;
-        row.Controls.Add(path, 1, 1);
+        row.Controls.Add(path, 3, 0);
+
+        // AutoSize kept on so the AutoSize column can measure the text: a
+        // Dock=Fill label reports the width it was handed, and the capability
+        // list was clipped to "只读 · 写 · 审批 · 续".
         var caps = DeckTheme.Label(capabilities, DeckTheme.Tiny, DeckTheme.Dim);
-        // Row 0 only, with AutoSize kept on so the AutoSize column can measure
-        // the text: a Dock=Fill label reports the width it was handed, and the
-        // capability list was clipped to "只读 · 写 · 审批 · 续".
         caps.AutoSize = true;
         caps.Dock = DockStyle.None;
-        caps.Anchor = AnchorStyles.Top | AnchorStyles.Right;
+        caps.Anchor = AnchorStyles.Right;
         caps.TextAlign = ContentAlignment.MiddleRight;
-        caps.Margin = new Padding(12, 2, 0, 0);
-        row.Controls.Add(caps, 2, 0);
+        caps.Margin = Padding.Empty;
+        row.Controls.Add(caps, 4, 0);
         return row;
     }
 
     private void RefreshSettings()
     {
         if (logs.TextLength == 0) logs.Text = LogsPath;
-        RefreshProjects();
         var service = ServiceControl.Query();
         serviceDot.Color = service.Running ? DeckTheme.Good : service.Installed ? DeckTheme.Warning : DeckTheme.Dim;
         serviceTitle.Text = service.Running ? "开机自动运行 · 服务运行中"
@@ -397,75 +441,6 @@ internal sealed partial class ReviewWindow
         }
     }
 
-    private void SetProjectRows(List<(string Directory, string Id, bool Enabled, string Mode)> rows)
-    {
-        projectTable.SetRows(rows);
-        if (projectBody is null || projectRulesRow < 0 || projectRulesRow >= projectBody.RowStyles.Count)
-            return;
-        // Rules are onboarding text: shown when the list is empty, collapsed as
-        // soon as it has entries so the table can show three projects instead of
-        // slicing the second one.
-        projectBody.RowStyles[projectRulesRow] =
-            new RowStyle(SizeType.Absolute, rows.Count == 0 ? 59 : 0);
-        projectBody.PerformLayout();
-    }
-
-    private void RefreshProjects()
-    {
-        var path = ProjectsPath;
-        if (!File.Exists(path))
-        {
-            SetProjectRows([]);
-            projectSummary.Text = "0 个目录";
-            projectSummary.ForeColor = DeckTheme.Dim;
-            projectSummary.BackColor = DeckTheme.Surface2;
-            return;
-        }
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(path));
-            if (!document.RootElement.TryGetProperty("projects", out var projects) ||
-                projects.ValueKind != JsonValueKind.Array)
-            {
-                SetProjectRows([]);
-                projectSummary.Text = "清单格式不正确";
-                projectSummary.ForeColor = DeckTheme.Danger;
-                projectSummary.BackColor = DeckTheme.Tint(DeckTheme.Danger);
-                return;
-            }
-            var rows = new List<(string Directory, string Id, bool Enabled, string Mode)>();
-            foreach (var project in projects.EnumerateArray())
-            {
-                var id = project.TryGetProperty("id", out var i) ? i.GetString() ?? "" : "";
-                var directory = project.TryGetProperty("directory", out var d) ? d.GetString() ?? "" : "";
-                var on = project.TryGetProperty("enabled", out var e) && e.GetBoolean();
-                var mode = project.TryGetProperty("mode", out var m) ? m.GetString() ?? "" : "";
-                rows.Add((directory, id, on, mode));
-            }
-            SetProjectRows(rows);
-            int enabled = rows.Count(row => row.Enabled);
-            projectSummary.Text = $"{rows.Count} 个目录";
-            projectSummary.ForeColor = enabled > 0 ? DeckTheme.Good : DeckTheme.Dim;
-            projectSummary.BackColor = enabled > 0 ? DeckTheme.Tint(DeckTheme.Good) : DeckTheme.Surface2;
-        }
-        catch (Exception error) when (error is IOException or JsonException)
-        {
-            SetProjectRows([]);
-            projectSummary.Text = "读取失败";
-            projectSummary.ForeColor = DeckTheme.Danger;
-            projectSummary.BackColor = DeckTheme.Tint(DeckTheme.Danger);
-            status.Text = $"读取授权清单失败：{error.Message}";
-        }
-    }
-
-    private async Task ManageProjectsAsync()
-    {
-        using var editor = new ProjectEditor(ProjectsPath);
-        if (editor.ShowDialog(this) == DialogResult.OK) status.Text = "项目授权已保存。";
-        RefreshProjects();
-        await Task.CompletedTask;
-    }
-
     // Three trailing segments identify a build without overflowing the row: the
     // Codex path alone is longer than the card is wide.
     private static string CompactPath(string path)
@@ -530,95 +505,84 @@ internal sealed partial class ReviewWindow
         }
     }
 
-    // The whitelist is painted rather than a DataGridView: the grid's header
-    // chrome and cell padding cannot be fully themed, and at this size the
-    // default look reads as an editable text box rather than a table.
-    private sealed class WhitelistView : ScrollableControl
+    // A painted tab strip: the design's tabs are text on a hairline with a 2px
+    // underline under the active one. Four flat buttons could not draw that
+    // underline without leaving every tab looking selected.
+    private sealed class SettingsTabsView : Control
     {
-        private readonly List<(string Directory, string Id, bool Enabled, string Mode)> rows = [];
+        private static readonly string[] Labels = ["接入", "引擎", "配对", "诊断"];
+        private const int TabWidth = 76;
+        private const int TabLeft = 16;
+        private int selected;
+        private int hover = -1;
 
-        internal WhitelistView()
+        internal SettingsTabsView()
         {
+            Height = 46;
+            Dock = DockStyle.Fill;
+            BackColor = DeckTheme.Surface;
+            Cursor = Cursors.Hand;
             SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint |
                      ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-            BackColor = DeckTheme.Surface;
-            AutoScroll = true;
         }
 
-        internal void SetRows(IEnumerable<(string Directory, string Id, bool Enabled, string Mode)> value)
+        internal event Action<int>? Selected;
+
+        [System.ComponentModel.Browsable(false)]
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        internal int SelectedIndex
         {
-            rows.Clear();
-            rows.AddRange(value);
-            AutoScrollMinSize = new Size(0, 28 + rows.Count * 36);
-            AutoScrollPosition = Point.Empty;
-            Invalidate();
+            get => selected;
+            set
+            {
+                if (value < 0 || value >= Labels.Length || selected == value) return;
+                selected = value;
+                Invalidate();
+            }
+        }
+
+        private Rectangle TabBounds(int index) => new(TabLeft + index * TabWidth, 0, TabWidth, Height - 1);
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            int hit = Enumerable.Range(0, Labels.Length).FirstOrDefault(i => TabBounds(i).Contains(e.Location), -1);
+            if (hit != hover) { hover = hit; Invalidate(); }
+            base.OnMouseMove(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e) { hover = -1; Invalidate(); base.OnMouseLeave(e); }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            int hit = Enumerable.Range(0, Labels.Length).FirstOrDefault(i => TabBounds(i).Contains(e.Location), -1);
+            if (hit >= 0) Selected?.Invoke(hit);
+            base.OnMouseDown(e);
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
-            using (var background = new SolidBrush(DeckTheme.Surface)) g.FillRectangle(background, ClientRectangle);
-            const int left = 5;
-            int right = Width - 4 - (VerticalScroll.Visible ? SystemInformation.VerticalScrollBarWidth : 0);
-            const int idWidth = 118;
-            const int modeWidth = 56;
-            const int onWidth = 60;
-            int headerHeight = 28;
-
-            if (rows.Count == 0)
+            using (var background = new SolidBrush(DeckTheme.Surface))
+                g.FillRectangle(background, ClientRectangle);
+            using (var line = new Pen(DeckTheme.Line))
+                g.DrawLine(line, 0, Height - 1, Width, Height - 1);
+            for (int index = 0; index < Labels.Length; index++)
             {
-                // No header row for an empty list: column titles over nothing are
-                // noise, and dropping them is what lets both onboarding lines fit
-                // in the space the card can spare.
-                TextRenderer.DrawText(g, "还没有授权清单", DeckTheme.Small,
-                    new Point(left, 4), DeckTheme.Muted, TextFormatFlags.NoPadding);
-                TextRenderer.DrawText(g, "点「管理项目…」添加第一个目录", DeckTheme.Small,
-                    new Point(left, 26), DeckTheme.Dim, TextFormatFlags.NoPadding);
-                return;
-            }
-
-            using (var line = new Pen(DeckTheme.Line2))
-                g.DrawLine(line, 0, headerHeight - 1, Width, headerHeight - 1);
-            int idLeft = right - idWidth - modeWidth - onWidth;
-            TextRenderer.DrawText(g, "本机目录", DeckTheme.Tiny, new Point(left, 8), DeckTheme.Dim,
-                TextFormatFlags.NoPadding);
-            TextRenderer.DrawText(g, "项目 ID", DeckTheme.Tiny, new Point(idLeft, 8),
-                DeckTheme.Dim, TextFormatFlags.NoPadding);
-            TextRenderer.DrawText(g, "权限", DeckTheme.Tiny, new Point(idLeft + idWidth, 8),
-                DeckTheme.Dim, TextFormatFlags.NoPadding);
-            TextRenderer.DrawText(g, "启用", DeckTheme.Tiny, new Point(right - onWidth + 6, 8),
-                DeckTheme.Dim, TextFormatFlags.NoPadding);
-
-            var state = g.Save();
-            g.SetClip(new Rectangle(0, headerHeight, Width, Height - headerHeight));
-            int y = headerHeight + AutoScrollPosition.Y;
-            foreach (var (directory, id, enabled, mode) in rows)
-            {
-                if (y > Height) break;
-                if (y + 36 < headerHeight)
+                var box = TabBounds(index);
+                if (index == hover && index != selected)
                 {
-                    y += 36;
-                    continue;
+                    using var path = DeckTheme.Rounded(new RectangleF(box.X + 2, 5, box.Width - 4, box.Height - 10), 5);
+                    using var fill = new SolidBrush(DeckTheme.Active);
+                    g.FillPath(fill, path);
                 }
-                int cellY = y + 11;
-                int directoryWidth = Math.Max(40, Width - idWidth - modeWidth - onWidth - left - 12);
-                TextRenderer.DrawText(g, directory, DeckTheme.MonoSmall,
-                    new Rectangle(left, cellY, directoryWidth, 18), DeckTheme.Muted,
-                    TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-                TextRenderer.DrawText(g, id, DeckTheme.MonoMicro,
-                    new Rectangle(idLeft, cellY + 1, idWidth, 18), DeckTheme.Dim,
-                    TextFormatFlags.EndEllipsis | TextFormatFlags.NoPadding | TextFormatFlags.SingleLine);
-                TextRenderer.DrawText(g, mode == "workspace-write" ? "可写" : "只读", DeckTheme.Small,
-                    new Rectangle(idLeft + idWidth, cellY, modeWidth, 18),
-                    mode == "workspace-write" ? DeckTheme.Warning : DeckTheme.Dim, TextFormatFlags.NoPadding);
-                TextRenderer.DrawText(g, enabled ? "启用" : "停用", DeckTheme.Small,
-                    new Rectangle(right - onWidth + 6, cellY, onWidth - 8, 18),
-                    enabled ? DeckTheme.Good : DeckTheme.Dim, TextFormatFlags.NoPadding);
-                using (var line = new Pen(DeckTheme.Line2))
-                    g.DrawLine(line, 0, y + 35, Width, y + 35);
-                y += 36;
+                var color = index == selected ? DeckTheme.Ink : DeckTheme.Muted;
+                TextRenderer.DrawText(g, Labels[index], index == selected ? DeckTheme.ButtonFaceBold : DeckTheme.ButtonFace,
+                    box, color,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+                if (index != selected) continue;
+                using var underline = new SolidBrush(DeckTheme.Accent);
+                g.FillRectangle(underline, box.X + 12, Height - 2, box.Width - 24, 2);
             }
-            g.Restore(state);
         }
     }
 }
