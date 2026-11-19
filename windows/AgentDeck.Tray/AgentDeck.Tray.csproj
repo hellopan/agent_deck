@@ -5,9 +5,35 @@
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- The updater compares this against the version in latest.json. Bump it
+         with every release; publish-release.ps1 can override it with -p:Version. -->
+    <Version>0.2.4</Version>
+    <!-- The black/white split "AD" mark. csc writes this into the exe's Win32
+         icon group (Explorer, taskbar, Alt-Tab); DeckTheme loads the same file
+         from the embedded resource below for the tray and window title bars. -->
+    <ApplicationIcon>..\..\assets\agentdeck.ico</ApplicationIcon>
+    <!-- GDI+ text (ApplicationUseCompatibleTextRendering) was tried here to
+         soften the glyphs towards Chrome's rendering: it did not look smoother,
+         and it broke the shared centre line between a Label and a self-painted
+         pill, because the two measured their text with different engines. GDI
+         keeps the geometry predictable, which matters more for a dense UI. -->
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
     <EmbeddedResource Include="$(AgentDeckBackend)" LogicalName="AgentDeck.Backend.exe" Condition="'$(AgentDeckBackend)' != ''" />
+    <EmbeddedResource Include="..\..\assets\agentdeck.ico" LogicalName="AgentDeck.AppIcon.ico" />
+  </ItemGroup>
+  <!-- The page ships inside the exe: the installer is a single file, so the
+       HTML cannot sit next to it. Install() writes these three out on start. -->
+  <ItemGroup>
+    <EmbeddedResource Include="ui\index.html" LogicalName="AgentDeck.Ui.index.html" />
+    <EmbeddedResource Include="ui\app.js" LogicalName="AgentDeck.Ui.app.js" />
+    <EmbeddedResource Include="ui\shell.css" LogicalName="AgentDeck.Ui.shell.css" />
+  </ItemGroup>
+  <!-- Still copied in a normal build, so `dotnet run` and the debug shell can
+       read the page straight from disk and see edits without a republish. -->
+  <ItemGroup>
+    <Content Include="ui\**\*" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

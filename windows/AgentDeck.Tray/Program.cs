@@ -7,21 +7,42 @@ namespace AgentDeck.Tray;
 internal static class Program
 {
     [STAThread]
-    private static void Main()
+    private static void Main(string[] args)
     {
         ApplicationConfiguration.Initialize();
+
         using var instance = new Mutex(true, @"Local\AgentDeck.Tray", out var firstInstance);
+        // The updater starts the replacement while this process is still
+        // winding down. Wait for the old owner to release the mutex instead of
+        // losing the update to the "already running" dialog.
+        if (!firstInstance && args.Contains("--after-update"))
+        {
+            try { firstInstance = instance.WaitOne(TimeSpan.FromSeconds(8)); }
+            catch (AbandonedMutexException) { firstInstance = true; }
+        }
         if (!firstInstance)
         {
             MessageBox.Show("AgentDeck 已运行，请从系统托盘打开。");
             return;
         }
+        UpdateManager.Cleanup();
         try { Install(); }
         catch (Exception error)
         {
             MessageBox.Show(error.Message, "AgentDeck 安装失败");
             return;
         }
+
+        // The HTML shell is the product now. The WinForms window stays behind a
+        // switch for one release: if a machine turns out to need the old layout
+        // (ancient WebView2, a display quirk), the answer is one environment
+        // variable, not a rebuilt installer.
+        if (Environment.GetEnvironmentVariable("AGENTDECK_LEGACY") == "1") RunLegacy();
+        else RunShell();
+    }
+
+    private static void RunLegacy()
+    {
         using var window = new ReviewWindow();
         var exiting = false;
         using var menu = new ContextMenuStrip();
@@ -54,6 +75,66 @@ internal static class Program
             exiting = true;
             window.Close();
         });
+        // QA hook: AGENTDECK_SHOW=1 opens the window straight away instead of
+        // leaving it in the tray, so screenshots do not need a human to click.
+        // TopMost only matters here — a freshly launched process cannot steal
+        // the foreground, so the window would be captured behind the editor.
+        if (Environment.GetEnvironmentVariable("AGENTDECK_SHOW") == "1")
+        {
+            window.TopMost = true;
+            ShowWindow();
+        }
+        if (int.TryParse(Environment.GetEnvironmentVariable("AGENTDECK_PAGE"), out var openPage))
+            window.OpenPage(openPage);
+        if (int.TryParse(Environment.GetEnvironmentVariable("AGENTDECK_SETTINGS_TAB"), out var openTab))
+            window.OpenSettingsTab(openTab);
+        Application.Run(window);
+    }
+
+    private static void RunShell()
+    {
+        using var window = new WebViewWindow();
+        var exiting = false;
+        using var menu = new ContextMenuStrip();
+        using var tray = new NotifyIcon
+        {
+            Icon = DeckTheme.AppIcon, Text = "AgentDeck", ContextMenuStrip = menu, Visible = true
+        };
+        void ShowWindow()
+        {
+            window.Show();
+            window.WindowState = FormWindowState.Normal;
+            window.Activate();
+        }
+        window.FormClosing += (_, e) =>
+        {
+            if (e.CloseReason != CloseReason.UserClosing || exiting)
+                return;
+            e.Cancel = true;
+            window.Hide();
+        };
+        tray.DoubleClick += (_, _) => ShowWindow();
+        menu.Items.Add("打开 AgentDeck", null, (_, _) => ShowWindow());
+        menu.Items.Add("叫停运行中的任务", null, (_, _) =>
+        {
+            ShowWindow();
+            window.ShowPage("tasks");
+        });
+        menu.Items.Add("退出托盘", null, (_, _) =>
+        {
+            exiting = true;
+            window.Close();
+        });
+
+        if (Environment.GetEnvironmentVariable("AGENTDECK_SHOW") == "1")
+        {
+            ShowWindow();
+            // Raise the window once, then hand z-order back: a permanently
+            // topmost shell covers every other app, and it also sat above its
+            // own dialogs until those learned to mirror the flag.
+            window.TopMost = true;
+            window.TopMost = false;
+        }
         Application.Run(window);
     }
 
@@ -63,17 +144,45 @@ internal static class Program
     private static void Install()
     {
         using var resource = typeof(Program).Assembly.GetManifestResourceStream("AgentDeck.Backend.exe");
-        if (resource is null) return; // Development build with a side-by-side backend.
-        Directory.CreateDirectory(InstallDirectory);
-        var backend = Path.Combine(InstallDirectory, "agentdeck-task-lab.exe");
-        using var memory = new MemoryStream();
-        resource.CopyTo(memory);
-        var data = memory.ToArray();
-        WriteIfChanged(backend, data);
-        var current = Environment.ProcessPath!;
-        var installed = Path.Combine(InstallDirectory, "AgentDeck.exe");
-        if (!string.Equals(current, installed, StringComparison.OrdinalIgnoreCase))
-            WriteIfChanged(installed, File.ReadAllBytes(current));
+        if (resource is not null)
+        {
+            Directory.CreateDirectory(InstallDirectory);
+            var backend = Path.Combine(InstallDirectory, "agentdeck-task-lab.exe");
+            using var memory = new MemoryStream();
+            resource.CopyTo(memory);
+            // A Windows service keeps the backend exe open. Tray mode does not
+            // need to unpack it in that case, and a locked file must never stop
+            // the shell from starting immediately after an update.
+            try { WriteIfChanged(backend, memory.ToArray()); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            var current = Environment.ProcessPath!;
+            var installed = Path.Combine(InstallDirectory, "AgentDeck.exe");
+            if (!string.Equals(current, installed, StringComparison.OrdinalIgnoreCase))
+                WriteIfChanged(installed, File.ReadAllBytes(current));
+        }
+        ExtractUi();
+    }
+
+    /// <summary>
+    /// The page lives inside the exe so the installer stays one file. It is
+    /// unpacked next to the backend (not into a temp directory) because the
+    /// WebView profile and the page must survive a restart together, and
+    /// because a user can open index.html to see what the shell is showing.
+    /// </summary>
+    private static void ExtractUi()
+    {
+        var target = Path.Combine(InstallDirectory, "ui");
+        Directory.CreateDirectory(target);
+        foreach (var name in new[] { "index.html", "app.js", "shell.css" })
+        {
+            using var stream = typeof(Program).Assembly
+                .GetManifestResourceStream($"AgentDeck.Ui.{name}");
+            if (stream is null) continue;
+            using var memory = new MemoryStream();
+            stream.CopyTo(memory);
+            WriteIfChanged(Path.Combine(target, name), memory.ToArray());
+        }
     }
 
     private static void WriteIfChanged(string path, byte[] data)
@@ -122,12 +231,26 @@ internal sealed partial class ReviewWindow : Form
                 StartAgent(config.RootElement.GetProperty("devices").EnumerateObject().Single().Name);
                 RecordEvent("Agent 已启动");
                 status.Text = "本机 Agent 已启动。";
-                await RefreshInboxAsync();
             }
-            catch (Exception error) { SetStatus(error.Message, error: true); }
+            catch (Exception error) { SetStatus("启动 Agent 失败。" + Say(error), error: true); }
             finally { UpdateConnection(); }
         };
     }
+
+    /// <summary>
+    /// .NET reports OS failures in English ("An error occurred trying to start
+    /// process ..."), which must not appear in a Chinese status bar. Only the
+    /// two failures a user can act on are translated; everything else keeps
+    /// the original text so a bug report still carries it.
+    /// </summary>
+    private static string Say(Exception error) => error switch
+    {
+        System.ComponentModel.Win32Exception =>
+            "找不到命令行工具 agentdeck-lab.exe，重装托盘端。",
+        UnauthorizedAccessException =>
+            "没有权限访问安装目录，试试管理员运行。",
+        _ => error.Message,
+    };
 
     private static string SettingsPath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "AgentDeck", "tray-settings.json");
@@ -148,7 +271,11 @@ internal sealed partial class ReviewWindow : Form
 
     private void SetStatus(string message, bool error = false)
     {
-        status.Text = message;
+        // One line, always. The bar is 34px and a wrapped second line falls
+        // outside the window frame, so long text is cut here rather than by the
+        // layout. 60 characters is roughly 420px at this font — comfortably
+        // inside the widest status cell.
+        status.Text = message.Length > 60 ? message[..59] + "…" : message;
         status.ForeColor = error ? DeckTheme.Danger : DeckTheme.Dim;
         flashTimer.Stop();
         flashTimer.Start();
@@ -421,21 +548,25 @@ internal sealed partial class ReviewWindow : Form
     private void UpdateConnection()
     {
         RefreshStatePage();
-        LoadTrace(force: false);
     }
 
     internal Task OpenTasksAndCancelTaskAsync()
     {
         SelectPage(1);
-        var running = queueList.Controls.OfType<QueueRow>()
-            .FirstOrDefault(row => row.Item.Status is "running" or "queued");
-        if (running is null)
+        return RunActionAsync(async () =>
         {
-            SetStatus("目前没有运行中的任务。");
-            return Task.CompletedTask;
-        }
-        SelectTask(running);
-        return RunActionAsync(CancelAsync);
+            var output = await RunAsync("inbox", "-task-inbox", RequirePath(InboxPath, "任务收件箱"),
+                "-projects", RequirePath(ProjectsPath, "项目授权清单"),
+                "-task-logs", RequirePath(LogsPath, "任务日志目录"));
+            var running = (JsonSerializer.Deserialize<QueueView>(output, Json)?.Items ?? [])
+                .FirstOrDefault(item => item.Status is "running" or "queued");
+            if (running is null)
+            {
+                SetStatus("目前没有运行中的任务。");
+                return;
+            }
+            await CancelAsync(running);
+        });
     }
 
     private Button AddAction(FlowLayoutPanel row, string label, Func<Task> action,
@@ -460,7 +591,7 @@ internal sealed partial class ReviewWindow : Form
         }
         catch (Exception error)
         {
-            if (!IsDisposed) SetStatus(error.Message, error: true);
+            if (!IsDisposed) SetStatus(Say(error), error: true);
         }
         finally
         {
