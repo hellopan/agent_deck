@@ -342,16 +342,34 @@ func (a *agentRuntime) execute(ctx context.Context, task *queuedTask) {
 			status = "interrupted"
 		}
 	}
-	if errors.Is(runErr, codexprobe.ErrThreadUnavailable) {
-		// Tell the phone why the follow-up could not run: a new thread here
-		// would answer a question the model never saw.
-		if err := journal.Append(codexprobe.TaskEvent{
-			Type: "task/notice", ThreadID: threadID,
-			Text: "上一轮会话已经无法续接，这一句没有执行。重新提交一个任务会开新会话。",
-		}); err != nil {
-			a.logger.Printf("task %s notice: %v", shortID(task.TaskID), err)
+
+	// A failed turn used to leave only "task/finished failed" in the journal —
+	// the reason was dropped, so neither the phone nor support could tell a
+	// missing login from a bad project path. Record a short, safe explanation
+	// in the timeline and the full error in the service log.
+	if runErr != nil {
+		a.logger.Printf("task %s execution error: %v", shortID(task.TaskID), runErr)
+		notice := ""
+		switch {
+		case errors.Is(runErr, codexprobe.ErrThreadUnavailable):
+			// A new thread here would answer a question the model never saw.
+			notice = "上一轮会话已经无法续接，这一句没有执行。重新提交一个任务会开新会话。"
+		case errors.Is(runErr, errProjectRevoked):
+			notice = "项目授权已变更，任务被中止。"
+		case errors.Is(runErr, errTaskCanceled), errors.Is(ctx.Err(), context.Canceled):
+			notice = "任务已被取消。"
+		case status == "failed":
+			// Do not leak absolute paths or credentials to the phone; the
+			// complete error stays in the local service log.
+			notice = "执行失败：引擎启动或运行出错，请查看电脑上的 AgentDeck 服务日志了解原因。"
 		}
-		a.logger.Printf("task %s conversation unavailable: %v", shortID(task.TaskID), runErr)
+		if notice != "" {
+			if err := journal.Append(codexprobe.TaskEvent{
+				Type: "task/notice", ThreadID: threadID, Text: notice,
+			}); err != nil {
+				a.logger.Printf("task %s notice: %v", shortID(task.TaskID), err)
+			}
+		}
 	}
 	if err := journal.Finish(status); err != nil {
 		a.logger.Printf("task %s final status: %v", shortID(task.TaskID), err)

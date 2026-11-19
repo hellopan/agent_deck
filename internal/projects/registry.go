@@ -18,6 +18,12 @@ var (
 	validID          = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,63}$`)
 )
 
+// EngineID names the local coding agent that runs tasks for a project. Only
+// Codex has a task-execution adapter today; the other detected tools are shown
+// for information but cannot be selected, so a project can never point at an
+// engine that would fail to start a task.
+const EngineID = "codex"
+
 type Entry struct {
 	ID        string `json:"id"`
 	Directory string `json:"directory"`
@@ -26,6 +32,17 @@ type Entry struct {
 	// read-only, so every list written before modes existed keeps the strict
 	// setting instead of silently granting writes.
 	Mode string `json:"mode,omitempty"`
+	// Engine is the execution engine for this project. Empty means Codex, so
+	// policies written before engines existed keep working unchanged.
+	Engine string `json:"engine,omitempty"`
+}
+
+// EngineOf returns the engine an entry runs under, defaulting to Codex.
+func (e Entry) EngineOf() string {
+	if e.Engine == "" {
+		return EngineID
+	}
+	return e.Engine
 }
 
 // Mode is the sandbox a task runs under. Only Codex's two local scopes are
@@ -162,6 +179,12 @@ func readPolicy(path string) (map[string]Entry, error) {
 		}
 		if _, err := parseMode(entry.Mode); err != nil {
 			return nil, err
+		}
+		// Only engines with a task-execution adapter may be stored. A project
+		// bound to an unsupported engine would pass authorization and then fail
+		// at launch — the exact class of failure this field is meant to prevent.
+		if engine := entry.EngineOf(); engine != EngineID {
+			return nil, fmt.Errorf("project %q names an unsupported engine %q", entry.ID, engine)
 		}
 		entries[entry.ID] = entry
 	}

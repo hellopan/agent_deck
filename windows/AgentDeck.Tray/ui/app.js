@@ -910,12 +910,16 @@
       return;
     }
     body.innerHTML = '<table class="pj-table"><thead><tr>' +
-      '<th style="width:118px">项目 ID</th><th>本机目录</th>' +
-      '<th style="width:74px">权限</th><th style="width:46px">启用</th><th style="width:54px"></th>' +
+      '<th style="width:112px">项目 ID</th><th>本机目录</th>' +
+      '<th style="width:78px">引擎</th><th style="width:70px">权限</th>' +
+      '<th style="width:46px">启用</th><th style="width:54px"></th>' +
       '</tr></thead><tbody>' + list.map(function (p, i) {
         return '<tr data-pj="' + i + '">' +
           '<td><input class="input" data-f="id" value="' + esc(p.id || "") + '"></td>' +
           '<td class="dir">' + esc(p.directory || "") + '</td>' +
+          '<td><select class="sel" data-f="engine" disabled title="当前只有 Codex 支持执行任务">' +
+            '<option value="codex" selected>Codex</option>' +
+          '</select></td>' +
           '<td><select class="sel" data-f="mode">' +
             '<option value="read-only"' + (p.mode !== "workspace-write" ? " selected" : "") + '>只读</option>' +
             '<option value="workspace-write"' + (p.mode === "workspace-write" ? " selected" : "") + '>可写</option>' +
@@ -935,8 +939,9 @@
     var body = document.getElementById("projects-body");
     var empty = body && body.querySelector(".pj-empty");
     if (empty) body.innerHTML = '<table class="pj-table"><thead><tr>' +
-      '<th style="width:118px">项目 ID</th><th>本机目录</th>' +
-      '<th style="width:74px">权限</th><th style="width:46px">启用</th><th style="width:54px"></th>' +
+      '<th style="width:112px">项目 ID</th><th>本机目录</th>' +
+      '<th style="width:78px">引擎</th><th style="width:70px">权限</th>' +
+      '<th style="width:46px">启用</th><th style="width:54px"></th>' +
       '</tr></thead><tbody></tbody></table>';
     var tbody = body && body.querySelector("tbody");
     if (!tbody) return;
@@ -952,6 +957,8 @@
     tr.innerHTML =
       '<td><input class="input" data-f="id" value="' + esc(slug) + '"></td>' +
       '<td class="dir">' + esc(result.directory) + '</td>' +
+      '<td><select class="sel" data-f="engine" disabled title="当前只有 Codex 支持执行任务">' +
+      '<option value="codex" selected>Codex</option></select></td>' +
       '<td><select class="sel" data-f="mode"><option value="read-only">只读</option>' +
       '<option value="workspace-write">可写</option></select></td>' +
       '<td><input type="checkbox" data-f="enabled"></td>' +
@@ -966,6 +973,7 @@
       return {
         id: tr.querySelector('input[data-f="id"]').value.trim(),
         directory: tr.querySelector("td.dir").textContent.trim(),
+        engine: (tr.querySelector('select[data-f="engine"]') || {}).value || "codex",
         mode: tr.querySelector('select[data-f="mode"]').value,
         enabled: tr.querySelector('input[data-f="enabled"]').checked,
         remove: false

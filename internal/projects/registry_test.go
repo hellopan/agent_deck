@@ -82,6 +82,36 @@ func TestModeDefaultsToReadOnlyAndRejectsUnknownScopes(t *testing.T) {
 	}
 }
 
+func TestEngineDefaultsToCodexAndRejectsUnsupported(t *testing.T) {
+	directory := t.TempDir()
+	policy := filepath.Join(directory, "projects.json")
+	project, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A list written before engines existed has no engine field and must keep
+	// resolving to the only engine with an execution adapter.
+	writePolicy(t, policy, Entry{ID: "alpha", Directory: project, Enabled: true})
+	if got := (Entry{ID: "alpha"}).EngineOf(); got != EngineID {
+		t.Fatalf("legacy entry defaulted to %q, want %q", got, EngineID)
+	}
+	if _, err := Resolve(policy, "alpha"); err != nil {
+		t.Fatalf("legacy entry did not resolve: %v", err)
+	}
+	writePolicy(t, policy, Entry{ID: "alpha", Directory: project, Enabled: true, Engine: EngineID})
+	if _, err := Resolve(policy, "alpha"); err != nil {
+		t.Fatalf("codex entry did not resolve: %v", err)
+	}
+	// An unsupported engine is refused at policy load, so a project can never
+	// pass authorization and then fail to launch because nothing can run it.
+	for _, engine := range []string{"cursor", "workbuddy", "CLAUDE", "whatever"} {
+		writePolicy(t, policy, Entry{ID: "alpha", Directory: project, Enabled: true, Engine: engine})
+		if _, err := Resolve(policy, "alpha"); err == nil {
+			t.Errorf("unsupported engine %q was accepted", engine)
+		}
+	}
+}
+
 func writePolicy(t *testing.T, path string, entries ...Entry) {
 	t.Helper()
 	data, err := json.Marshal(struct {

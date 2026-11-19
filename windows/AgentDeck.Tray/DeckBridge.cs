@@ -184,7 +184,8 @@ internal sealed class DeckBridge
             projectJson.Add(new JsonObject
             {
                 ["id"] = entry.Id, ["directory"] = entry.Directory,
-                ["mode"] = entry.Mode, ["enabled"] = entry.Enabled
+                ["mode"] = entry.Mode, ["enabled"] = entry.Enabled,
+                ["engine"] = entry.Engine
             });
 
         var snapshot = new JsonObject
@@ -300,6 +301,33 @@ internal sealed class DeckBridge
     }
 
     internal string EnginesJson() => new JsonObject { ["engines"] = cachedEngines.DeepClone() }.ToJsonString(Pretty);
+
+    // EngineProblem returns why an engine cannot run tasks, or null when it is
+    // ready. Detection is cached, so this is a cheap guard at save time. An
+    // engine that was never detected is treated as not ready rather than
+    // silently allowed through.
+    private static string? EngineProblem(string id)
+    {
+        var detected = false;
+        foreach (var node in cachedEngines)
+        {
+            if (node is not JsonObject engine) continue;
+            if (engine["id"]?.GetValue<string>() != id) continue;
+            detected = true;
+            var ok = engine["ok"]?.GetValue<bool>() ?? false;
+            if (ok) return null;
+            var note = engine["note"]?.GetValue<string>() ?? "";
+            return string.IsNullOrEmpty(note) ? "不可用" : note;
+        }
+        // Detection has not finished yet (warm-up races the first save). Do not
+        // block on an unknown — the Agent re-checks the engine at task time.
+        return detected ? "不可用" : null;
+    }
+
+    private static string ToEngineName(string id) => id switch
+    {
+        "codex" => "Codex", "cursor" => "Cursor", "workbuddy" => "WorkBuddy", _ => id
+    };
 
     private string codexVersion = "";
     private bool EngineOk => codexVersion.Length > 0;
@@ -474,7 +502,7 @@ internal sealed class DeckBridge
 
     // -------------------------------------------------------------- projects
 
-    private sealed record ProjectEntry(string Id, string Directory, string Mode, bool Enabled);
+    private sealed record ProjectEntry(string Id, string Directory, string Mode, bool Enabled, string Engine);
 
     private List<ProjectEntry> Projects()
     {
@@ -486,9 +514,14 @@ internal sealed class DeckBridge
             if (!document.RootElement.TryGetProperty("projects", out var array) ||
                 array.ValueKind != JsonValueKind.Array) return list;
             foreach (var entry in array.EnumerateArray())
+            {
+                var engine = Field(entry, "engine");
+                if (engine.Length == 0) engine = "codex";
                 list.Add(new ProjectEntry(
                     Field(entry, "id"), Field(entry, "directory"), Field(entry, "mode"),
-                    entry.TryGetProperty("enabled", out var flag) && flag.ValueKind == JsonValueKind.True));
+                    entry.TryGetProperty("enabled", out var flag) && flag.ValueKind == JsonValueKind.True,
+                    engine));
+            }
         }
         catch (Exception error) when (error is IOException or JsonException) { }
         return list;
@@ -520,6 +553,17 @@ internal sealed class DeckBridge
             }
             else
             {
+                if (enabled == "true")
+                {
+                    // Enabling is the moment a project starts receiving tasks.
+                    // Refuse it when its engine cannot actually run them, so
+                    // the phone never gets a task that fails at launch.
+                    var engine = target["engine"]?.GetValue<string>();
+                    if (string.IsNullOrEmpty(engine)) engine = "codex";
+                    var problem = EngineProblem(engine);
+                    if (problem is not null)
+                        return Fail($"无法启用：{ToEngineName(engine)} 引擎未就绪（{problem}）。请先在「设置 → 引擎」确认可用。");
+                }
                 if (enabled is not null) target["enabled"] = enabled == "true";
                 if (mode is { Length: > 0 }) target["mode"] = mode;
             }
@@ -588,6 +632,8 @@ internal sealed class DeckBridge
                 var id = Field(row, "id");
                 var directory = Field(row, "directory");
                 var mode = Field(row, "mode");
+                var engine = Field(row, "engine");
+                if (engine.Length == 0) engine = "codex";
                 var enabled = row.TryGetProperty("enabled", out var flag) && flag.ValueKind == JsonValueKind.True;
                 if (!System.Text.RegularExpressions.Regex.IsMatch(id, @"\A[a-z0-9][a-z0-9_-]{0,63}\z") || !seen.Add(id))
                     return Fail($"项目 ID「{id}」无效或重复：只用小写字母、数字、连字符，且不能重复。");
@@ -595,6 +641,11 @@ internal sealed class DeckBridge
                     return Fail($"项目 {id} 的目录必须是本机绝对路径。");
                 if (mode is not ("read-only" or "workspace-write"))
                     return Fail($"项目 {id} 的权限必须是只读或可写。");
+                // The Agent only has a task-execution adapter for Codex. Refuse
+                // any other engine here rather than letting a project pass
+                // authorization and then fail at launch with no clear reason.
+                if (engine != "codex")
+                    return Fail($"项目 {id} 选的引擎暂不支持执行任务，请选择 Codex。");
                 if (enabled)
                 {
                     for (var dir = new DirectoryInfo(directory); dir is not null; dir = dir.Parent)
@@ -603,10 +654,17 @@ internal sealed class DeckBridge
                         if (!dir.Exists || (dir.Attributes & FileAttributes.ReparsePoint) != 0)
                             return Fail($"项目 {id} 的目录不存在或经过目录联接。");
                     }
+                    // An enabled project whose engine is not ready is exactly
+                    // what produces a failed task. Block it up front with the
+                    // reason from the last engine detection.
+                    var problem = EngineProblem("codex");
+                    if (problem is not null)
+                        return Fail($"项目 {id} 无法启用：Codex 引擎未就绪（{problem}）。请先在「设置 → 引擎」确认 Codex 可用。");
                 }
                 entries.Add(new Dictionary<string, object?>
                 {
-                    ["id"] = id, ["directory"] = directory, ["mode"] = mode, ["enabled"] = enabled
+                    ["id"] = id, ["directory"] = directory, ["mode"] = mode,
+                    ["enabled"] = enabled, ["engine"] = engine
                 });
             }
 
