@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A tray, not a logo: notification icons are a white mask the system tints,
+     and a coloured mark would be flattened to a grey block. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M4,4h16a1,1 0 0 1 1,1v10a1,1 0 0 1 -1,1h-4.6l-2.1,2.6h-2.6L8.6,16H4a1,1 0 0 1 -1,-1V5a1,1 0 0 1 1,-1zM5,6v7h14V6z" />
+</vector>

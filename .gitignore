@@ -62,3 +62,11 @@ coverage/
 .DS_Store
 Thumbs.db
 Desktop.ini
+
+# Screenshot scratch from UI review runs; never part of a build.
+.shots/
+
+# Android release signing material: the keystore and its passwords stay local.
+/android/keystore.properties
+/android/app/*.keystore
+/android/app/*.jks

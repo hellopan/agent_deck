@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adaptive-icon background. The mark keeps its own white half opaque, so a
+     white backdrop preserves the black/white diagonal split under every mask. -->
+<resources>
+    <color name="ic_launcher_background">#FFFFFFFF</color>
+</resources>

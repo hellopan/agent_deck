@@ -1,12 +1,53 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Lock-screen approval is refused on purpose; the notification is the only
+         channel that reaches a phone in a pocket, and a foreground service is the
+         only way Android lets the poll survive Doze. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- Android 11+ package visibility: an https ACTION_VIEW is still resolved
+         by the system, but declaring the intent keeps it explicit on every ROM. -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
     <application android:label="AgentDeck Lab" android:allowBackup="false"
+        android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="false" android:theme="@android:style/Theme.Material.NoActionBar">
-        <activity android:name=".MainActivity" android:exported="true">
+        <!-- Portrait, not sensor: the layout is one column, and the capture
+             screen used to force landscape, which sent this activity through a
+             recreation while the scanner result was in flight. -->
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTop"
+            android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- agentdeck://approval/{id}: the notification's deep link, also
+                 usable as a pasted link. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="agentdeck" android:host="approval" />
+            </intent-filter>
         </activity>
+        <!-- zxing ships this activity as sensorLandscape; replacing just the
+             orientation keeps its theme and configChanges intact. -->
+        <activity
+            android:name="com.journeyapps.barcodescanner.CaptureActivity"
+            android:screenOrientation="portrait"
+            tools:replace="android:screenOrientation" />
+        <service
+            android:name=".DeckService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 </manifest>
