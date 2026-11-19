@@ -274,6 +274,26 @@ html:not(.dark) .i-moon{display:none}
 .sheet p{margin:0 0 14px;font-size:12px;color:var(--t2);line-height:1.65}
 .fp{font-family:var(--mono);font-size:12.5px;letter-spacing:.8px;line-height:1.8;text-align:center;word-break:break-all;background:var(--bg-alt);border:1px solid var(--line);border-radius:6px;padding:11px 14px}
 .sheet .actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+/* form sheets (Relay config / project policy): reuse the page's inputs and
+   buttons, but give the dialog a wider body and a compact field layout. */
+.sheet.wide{width:560px}
+.sheet .sfield{margin-bottom:12px}
+.sheet .sfield label{display:block;font-size:11.5px;color:var(--t3);margin-bottom:5px}
+.sheet .sfield .input{height:32px}
+.sheet .hint{font-size:11px;color:var(--t3);margin-top:5px;line-height:1.55}
+.sheet .err{min-height:16px;font-size:11.5px;color:var(--red);margin-top:2px}
+.sheet .err:empty{display:none}
+.sheet .pj-toolbar{display:flex;align-items:center;gap:8px;margin:4px 0 10px}
+.sheet .pj-table{width:100%;border-collapse:collapse;font-size:12px}
+.sheet .pj-table th{text-align:left;font-weight:400;color:var(--t3);font-size:11px;padding:6px 8px;background:var(--bg-alt);border-bottom:1px solid var(--line)}
+.sheet .pj-table td{padding:7px 8px;border-bottom:1px solid var(--line2);vertical-align:middle}
+.sheet .pj-table tr:last-child td{border-bottom:0}
+.sheet .pj-table .dir{font-family:var(--mono);font-size:11px;color:var(--t2);word-break:break-all}
+.sheet .pj-table .input{height:26px;font-size:11.5px}
+.sheet .pj-table .sel{height:26px;width:74px}
+.sheet .pj-empty{padding:18px 8px;text-align:center;color:var(--t3);font-size:12px}
+.sheet .pj-del{border:0;background:none;color:var(--red);cursor:pointer;font-size:12px;padding:2px 6px;font-family:inherit;white-space:nowrap}
+.sheet .pj-del:hover{text-decoration:underline}
 /* status bar */
 .statusbar{height:30px;flex:none;display:flex;align-items:center;gap:14px;padding:0 14px;background:var(--titlebar);border-top:1px solid var(--line);font-size:11px;color:var(--t3)}
 .statusbar .r{margin-left:auto;display:flex;gap:16px;font-family:var(--mono);font-size:10.5px;letter-spacing:.2px}
@@ -352,7 +372,7 @@ html:not(.dark) .i-moon{display:none}
         <div class="state" id="top-state"><span class="dot"></span>已就绪 · 手机可连</div>
         <span class="pill plain" id="top-pending">2 个待审批</span>
         <span class="pill" id="top-phone">Pixel 8</span>
-        <span class="pill" id="top-service">服务模式 · 登录前可用</span>
+        <span class="pill" id="top-service">服务模式 · 开机即可连接</span>
         <div class="spacer"></div>
         <div class="meta" id="top-meta">28ms</div>
         <button class="icon-btn" title="重新检查" data-act="refresh">
@@ -428,7 +448,7 @@ html:not(.dark) .i-moon{display:none}
             <div class="card-h"><h2>服务与身份</h2><div class="right"><button class="btn sm quiet">打开服务日志</button><button class="btn sm">重新配对</button><button class="btn sm danger">撤销配对</button></div></div>
             <div class="card-b">
               <div class="kv" id="svc-kv">
-                <div><div class="k">服务模式</div><div class="v">已安装 · 自动启动，登录前即可上线</div></div>
+                <div><div class="k">服务模式</div><div class="v">已安装 · 自动启动，开机即可连接手机</div></div>
                 <div><div class="k">Relay 地址</div><div class="v mono">wss://relay.agentdeck.dev</div></div>
                 <div><div class="k">设备 ID</div><div class="v mono">8F2A·4C1D</div></div>
                 <div><div class="k">上次上线</div><div class="v">2 分钟前 · 持续运行 3 天 4 小时</div></div>
@@ -692,7 +712,7 @@ html:not(.dark) .i-moon{display:none}
                 <div class="field"><label>设备名称</label><div class="ctl"><input class="input" value="DESKTOP-8F2A"><div class="sub">手机设备列表里显示的名字。</div></div></div>
                 <div class="field"><label>Relay 地址</label><div class="ctl"><div class="inline"><input class="input" value="wss://relay.agentdeck.dev"><button class="btn sm">测试连接</button></div><div class="sub">保存后立即重连；失败时保留输入并指出下一步。</div></div></div>
                 <div class="field"><label>证书指纹</label><div class="ctl"><input class="input" readonly value="SHA256 4C:1D:8F:2A:9E:77:B3:05:6A:11:DE:42:70:8C:19:AF"><div class="sub">已钉扎。Relay 换证后需要重新配对，否则按失败处理。</div></div></div>
-                <div class="field"><label>服务状态</label><div class="ctl" style="padding-top:5px"><div style="display:flex;align-items:center;gap:10px"><span class="pill ok"><span class="dot"></span>运行中 · 登录前可上线</span><button class="btn sm">重新安装</button><button class="btn sm">停止</button></div><div class="sub">以 Windows 服务运行，托盘退出后继续接收指令。停止后手机立即断开，正在执行的任务会被取消。</div></div></div>
+                <div class="field"><label>服务状态</label><div class="ctl" style="padding-top:5px"><div style="display:flex;align-items:center;gap:10px"><span class="pill ok"><span class="dot"></span>运行中 · 开机即可连接手机</span><button class="btn sm">重新安装</button><button class="btn sm">停止</button></div><div class="sub">以 Windows 服务运行，托盘退出后继续接收指令。停止后手机立即断开，正在执行的任务会被取消。</div></div></div>
                 <div class="field"><label>版本与更新</label><div class="ctl" style="padding-top:5px"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="pill off"><span class="dot"></span>当前 v0.2.3 · 已是最新</span><button class="btn sm">检查更新</button><button class="btn sm primary" disabled>下载并安装</button></div><div class="sub">从 GitHub Releases 获取，校验 SHA-256 后自动重启安装；正在跑的任务会被取消。</div></div></div>
               </div>
               <div class="save-bar"><span class="state">有未保存的改动</span><div class="actions"><button class="btn">放弃改动</button><button class="btn primary">保存并重连</button></div></div>
@@ -796,6 +816,45 @@ html:not(.dark) .i-moon{display:none}
     <div class="sheet" style="width:auto;padding:16px" data-sheet="dismiss">
       <img id="qr-sheet-img" alt="配对二维码" style="display:block;width:auto;height:auto;max-width:min(628px,calc(100vw - 56px));max-height:calc(100vh - 150px);image-rendering:pixelated">
       <div class="qr-cap" style="margin-top:10px">用 AgentDeck Android 应用扫码 · 点空白处关闭</div>
+    </div>
+  </div>
+
+  <!-- 项目授权层：替代原 WinForms DataGridView 弹窗。目录选择仍走系统
+       对话框（浏览器无法自选本机目录），其余增删改在本页完成。 -->
+  <div class="scrim" id="projects-sheet" hidden>
+    <div class="sheet wide" role="dialog" aria-modal="true" aria-labelledby="projects-sheet-title">
+      <h3 id="projects-sheet-title">项目授权</h3>
+      <p>只有这里列出的目录能被远程访问。新增项目默认停用、只读；保存后立即生效。</p>
+      <div class="pj-toolbar">
+        <button class="btn sm" data-sheet="add-dir">添加目录…</button>
+        <span class="hint" style="margin:0">用系统对话框选本机目录，可多次添加</span>
+      </div>
+      <div id="projects-body"></div>
+      <div class="err" id="projects-err"></div>
+      <div class="actions">
+        <button class="btn" data-sheet="dismiss">取消</button>
+        <button class="btn primary" data-sheet="save-projects">保存授权</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Relay 配置层：替代原 WinForms 三输入框弹窗。 -->
+  <div class="scrim" id="relay-sheet" hidden>
+    <div class="sheet wide" role="dialog" aria-modal="true" aria-labelledby="relay-sheet-title">
+      <h3 id="relay-sheet-title">配置云服务器</h3>
+      <p>使用你的 AgentDeck Relay 注册这台电脑。保存后立即重连。</p>
+      <div class="sfield"><label>Relay 地址</label>
+        <input class="input" id="relay-endpoint" placeholder="wss://relay.example.com:8443" autocomplete="off"></div>
+      <div class="sfield"><label>证书 SHA-256 指纹</label>
+        <input class="input" id="relay-fingerprint" placeholder="64 位十六进制" autocomplete="off"></div>
+      <div class="sfield"><label>注册令牌</label>
+        <input class="input" id="relay-token" type="password" placeholder="云端生成的 64 位十六进制令牌" autocomplete="off">
+        <div class="hint">令牌只在注册时传给 Relay，不会显示在日志里。</div></div>
+      <div class="err" id="relay-err"></div>
+      <div class="actions">
+        <button class="btn" data-sheet="dismiss">取消</button>
+        <button class="btn primary" data-sheet="submit-relay">注册电脑</button>
+      </div>
     </div>
   </div>
 

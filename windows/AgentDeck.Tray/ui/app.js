@@ -122,8 +122,8 @@
 
     var servicePill = document.getElementById("top-service");
     if (servicePill) {
-      servicePill.textContent = s.service.running ? "服务模式 · 登录前可用"
-        : s.service.installed ? "服务已停 · 手机连不上" : "托盘模式 · 登录后可用";
+      servicePill.textContent = s.service.running ? "服务模式 · 开机即可连接"
+        : s.service.installed ? "服务已停 · 手机连不上" : "托盘模式 · 登录 Windows 后连接";
     }
 
     var meta = document.getElementById("top-meta");
@@ -602,11 +602,12 @@
           '<div class="sub">已钉扎。Relay 换证后需要重新配对，否则按失败处理。</div>') +
         field("服务状态", '<div style="display:flex;align-items:center;gap:10px;padding-top:5px">' +
           '<span class="pill ' + (s.service.running ? "ok" : s.service.installed ? "warn" : "off") + '">' +
-          '<span class="dot"></span>' + esc(s.service.running ? "运行中 · 登录前可上线"
-            : s.service.installed ? "已安装 · 未运行" : "未安装 · 托盘模式") + "</span>" +
+          '<span class="dot"></span>' + esc(s.service.running ? "运行中 · 开机即可连接"
+            : s.service.installed ? "已安装 · 未运行" : "托盘模式 · 未安装服务") + "</span>" +
           '<button class="btn sm" data-act="service">' + (s.service.installed ? "卸载服务" : "安装服务") + "</button></div>" +
-          '<div class="sub">以 Windows 服务运行，托盘退出后继续接收指令。停止后手机立即断开，' +
-          "正在执行的任务会被取消。</div>") +
+          '<div class="sub">' + (s.service.installed
+            ? "以 Windows 服务运行，开机后无需登录即可连接手机；停止后手机立即断开，正在执行的任务会被取消。"
+            : "当前以托盘方式运行：需要你登录 Windows 桌面后才会启动，手机才能连接。安装服务可改为开机自动运行、无需登录。") + "</div>") +
         field("版本与更新", '<div id="update-slot"></div>') +
         '</div><div class="save-bar"><span class="state">接入信息来自本机配置，改动后立即生效</span>' +
         '<div class="actions"><button class="btn" disabled>放弃改动</button>' +
@@ -875,10 +876,168 @@
   }
 
   function closeSheets() {
-    ["pair-sheet", "qr-sheet"].forEach(function (id) {
+    ["pair-sheet", "qr-sheet", "projects-sheet", "relay-sheet"].forEach(function (id) {
       var node = document.getElementById(id);
       if (node) node.hidden = true;
     });
+  }
+
+  // --------------------------------------------- project policy sheet
+  // The grid is plain inputs so edits stay in the DOM until 保存授权 is
+  // pressed — a half-typed id must never reach the policy file.
+  function openProjectsSheet() {
+    var sheet = document.getElementById("projects-sheet");
+    if (!sheet) return;
+    renderProjectRows();
+    var err = document.getElementById("projects-err");
+    if (err) err.textContent = "";
+    sheet.hidden = false;
+  }
+
+  function renderProjectRows() {
+    var body = document.getElementById("projects-body");
+    if (!body) return;
+    var list = (S.state && S.state.projects) || [];
+    if (!list.length) {
+      body.innerHTML = '<div class="pj-empty">还没有授权目录。点「添加目录」选择第一个项目。</div>';
+      return;
+    }
+    body.innerHTML = '<table class="pj-table"><thead><tr>' +
+      '<th style="width:118px">项目 ID</th><th>本机目录</th>' +
+      '<th style="width:74px">权限</th><th style="width:46px">启用</th><th style="width:54px"></th>' +
+      '</tr></thead><tbody>' + list.map(function (p, i) {
+        return '<tr data-pj="' + i + '">' +
+          '<td><input class="input" data-f="id" value="' + esc(p.id || "") + '"></td>' +
+          '<td class="dir">' + esc(p.directory || "") + '</td>' +
+          '<td><select class="sel" data-f="mode">' +
+            '<option value="read-only"' + (p.mode !== "workspace-write" ? " selected" : "") + '>只读</option>' +
+            '<option value="workspace-write"' + (p.mode === "workspace-write" ? " selected" : "") + '>可写</option>' +
+          '</select></td>' +
+          '<td><input type="checkbox" data-f="enabled"' + (p.enabled ? " checked" : "") + '></td>' +
+          '<td><button class="pj-del" data-f="del" title="移除">移除</button></td>' +
+          '</tr>';
+      }).join("") + '</tbody></table>';
+  }
+
+  async function addProjectDir() {
+    var result = await call("action", { name: "pick-directory" });
+    if (!result || !result.ok) {
+      setSheetError("projects-err", (result && result.message) || "没有选择目录。");
+      return;
+    }
+    var body = document.getElementById("projects-body");
+    var empty = body && body.querySelector(".pj-empty");
+    if (empty) body.innerHTML = '<table class="pj-table"><thead><tr>' +
+      '<th style="width:118px">项目 ID</th><th>本机目录</th>' +
+      '<th style="width:74px">权限</th><th style="width:46px">启用</th><th style="width:54px"></th>' +
+      '</tr></thead><tbody></tbody></table>';
+    var tbody = body && body.querySelector("tbody");
+    if (!tbody) return;
+    // Default id from the folder name, slugified to the policy's own rules.
+    var folder = result.directory.split(/[\\/]/).filter(Boolean).pop() || "project";
+    var slug = folder.toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 64) || "project";
+    if (!/^[a-z0-9]/.test(slug)) slug = "p" + slug;
+    var used = {};
+    tbody.querySelectorAll('input[data-f="id"]').forEach(function (n) { used[n.value] = true; });
+    var base = slug, n = 2;
+    while (used[slug]) slug = base + "-" + (n++);
+    var tr = document.createElement("tr");
+    tr.innerHTML =
+      '<td><input class="input" data-f="id" value="' + esc(slug) + '"></td>' +
+      '<td class="dir">' + esc(result.directory) + '</td>' +
+      '<td><select class="sel" data-f="mode"><option value="read-only">只读</option>' +
+      '<option value="workspace-write">可写</option></select></td>' +
+      '<td><input type="checkbox" data-f="enabled"></td>' +
+      '<td><button class="pj-del" data-f="del" title="移除">移除</button></td>';
+    tbody.appendChild(tr);
+    tr.querySelector('input[data-f="id"]').focus();
+    setSheetError("projects-err", "");
+  }
+
+  async function saveProjects() {
+    var rows = Array.prototype.map.call(document.querySelectorAll("#projects-body tbody tr"), function (tr) {
+      return {
+        id: tr.querySelector('input[data-f="id"]').value.trim(),
+        directory: tr.querySelector("td.dir").textContent.trim(),
+        mode: tr.querySelector('select[data-f="mode"]').value,
+        enabled: tr.querySelector('input[data-f="enabled"]').checked,
+        remove: false
+      };
+    });
+    var result = await call("action", { name: "save-projects", projects: rows });
+    if (!result || !result.ok) {
+      setSheetError("projects-err", (result && result.message) || "保存失败。");
+      return;
+    }
+    closeSheets();
+    report(result);
+    S.project = null;
+    await reloadState();
+  }
+
+  // ------------------------------------------------ relay config sheet
+  function openRelaySheet() {
+    var sheet = document.getElementById("relay-sheet");
+    if (!sheet) return;
+    var s = S.state || {};
+    var endpoint = document.getElementById("relay-endpoint");
+    if (endpoint) endpoint.value = s.relay || "";
+    var fp = document.getElementById("relay-fingerprint");
+    if (fp) fp.value = S.fingerprint || "";
+    var token = document.getElementById("relay-token");
+    if (token) token.value = "";
+    setSheetError("relay-err", "");
+    sheet.hidden = false;
+    if (endpoint) endpoint.focus();
+  }
+
+  async function submitRelay() {
+    var err = function (text) { setSheetError("relay-err", text); };
+    var endpoint = (document.getElementById("relay-endpoint").value || "").trim();
+    var fingerprint = (document.getElementById("relay-fingerprint").value || "").replace(/[:\s]/g, "").toLowerCase();
+    var token = (document.getElementById("relay-token").value || "").trim();
+    if (!/^wss:\/\/.+/.test(endpoint)) { err("请输入以 wss:// 开头的 Relay 地址。"); return; }
+    if (!/^[0-9a-f]{64}$/.test(fingerprint)) { err("请输入完整的 64 位十六进制证书指纹。"); return; }
+    if (!/^[0-9a-f]{64}$/.test(token)) { err("请输入云端生成的 64 位十六进制注册令牌。"); return; }
+    err("");
+    setSheetBusy("relay-sheet", true);
+    var result = await call("action", {
+      name: "relay-register", endpoint: endpoint, fingerprint: fingerprint, token: token
+    }, 120000);
+    setSheetBusy("relay-sheet", false);
+    // A repin needs a second, explicit confirmation inside the page, not a
+    // native MessageBox that would look foreign next to this sheet.
+    if (result && result.repinConfirm) {
+      if (window.confirm(result.message)) {
+        setSheetBusy("relay-sheet", true);
+        result = await call("action", {
+          name: "relay-register", endpoint: endpoint, fingerprint: fingerprint,
+          token: token, replace: "true"
+        }, 120000);
+        setSheetBusy("relay-sheet", false);
+      } else {
+        report({ ok: false, message: "已取消，本机身份没有改动。" });
+        return;
+      }
+    }
+    if (!result || !result.ok) { err((result && result.message) || "注册失败。"); return; }
+    closeSheets();
+    report(result);
+    await reloadState();
+  }
+
+  function setSheetError(id, text) {
+    var node = document.getElementById(id);
+    if (node) node.textContent = text || "";
+  }
+
+  function setSheetBusy(id, busy) {
+    var sheet = document.getElementById(id);
+    if (!sheet) return;
+    var primary = sheet.querySelector(".btn.primary");
+    var cancel = sheet.querySelector(".btn:not(.primary)");
+    if (primary) primary.disabled = busy;
+    if (cancel) cancel.disabled = busy;
   }
 
   async function confirmPair() {
@@ -966,6 +1125,9 @@
         var kind = role.getAttribute("data-sheet");
         if (kind === "confirm") confirmPair();
         else if (kind === "cancel") cancelPair();
+        else if (kind === "add-dir") addProjectDir();
+        else if (kind === "save-projects") saveProjects();
+        else if (kind === "submit-relay") submitRelay();
         else closeSheets();
         return;
       }
@@ -1047,14 +1209,10 @@
         await reloadState();
         return;
       case "relay":
-        report(await call("action", { name: "relay" }));
-        await reloadState();
+        openRelaySheet();
         return;
       case "edit-projects":
-        report(await call("action", { name: "edit-projects" }));
-        S.project = null;
-        lastProjects = "";
-        await reloadState();
+        openProjectsSheet();
         return;
       case "update-check":
         say("正在检查更新…");
@@ -1213,5 +1371,8 @@
 
   // QA: the screenshot hook can open a sheet without a phone to scan with.
   // Harmless in production — it only calls functions this file already runs.
-  window.__deck = { startPair: startPair, openPairSheet: openPairSheet };
+  window.__deck = {
+    startPair: startPair, openPairSheet: openPairSheet,
+    openProjectsSheet: openProjectsSheet, openRelaySheet: openRelaySheet
+  };
 })();

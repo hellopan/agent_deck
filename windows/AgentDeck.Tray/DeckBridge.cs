@@ -550,6 +550,103 @@ internal sealed class DeckBridge
         }
     }
 
+    // The WebView page cannot pick a local folder itself (browser sandbox).
+    // It asks here; the native dialog still runs owned by the shell window.
+    internal string PickDirectory()
+    {
+        try
+        {
+            using var picker = new FolderBrowserDialog { Description = "选择允许远程控制的项目目录" };
+            var owner = Owner;
+            var result = owner is null || owner.IsDisposed || !owner.Visible
+                ? picker.ShowDialog()
+                : picker.ShowDialog(owner);
+            if (result != DialogResult.OK) return Fail("没有选择目录。");
+            return new JsonObject { ["ok"] = true, ["directory"] = picker.SelectedPath }.ToJsonString();
+        }
+        catch (Exception error)
+        {
+            return Fail(error.Message);
+        }
+    }
+
+    // Mirrors ProjectEditor.Save: same id/path/mode validation, same lock and
+    // atomic replace. The page sends the whole edited list; nothing is written
+    // until every row passes, so a half-edited id can never reach the Agent.
+    internal string SaveProjects(string payload)
+    {
+        const int maxBytes = 64 * 1024;
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+                return Fail("项目清单格式不认。");
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var entries = new List<Dictionary<string, object?>>();
+            foreach (var row in document.RootElement.EnumerateArray())
+            {
+                var id = Field(row, "id");
+                var directory = Field(row, "directory");
+                var mode = Field(row, "mode");
+                var enabled = row.TryGetProperty("enabled", out var flag) && flag.ValueKind == JsonValueKind.True;
+                if (!System.Text.RegularExpressions.Regex.IsMatch(id, @"\A[a-z0-9][a-z0-9_-]{0,63}\z") || !seen.Add(id))
+                    return Fail($"项目 ID「{id}」无效或重复：只用小写字母、数字、连字符，且不能重复。");
+                if (!Path.IsPathFullyQualified(directory))
+                    return Fail($"项目 {id} 的目录必须是本机绝对路径。");
+                if (mode is not ("read-only" or "workspace-write"))
+                    return Fail($"项目 {id} 的权限必须是只读或可写。");
+                if (enabled)
+                {
+                    for (var dir = new DirectoryInfo(directory); dir is not null; dir = dir.Parent)
+                    {
+                        dir.Refresh();
+                        if (!dir.Exists || (dir.Attributes & FileAttributes.ReparsePoint) != 0)
+                            return Fail($"项目 {id} 的目录不存在或经过目录联接。");
+                    }
+                }
+                entries.Add(new Dictionary<string, object?>
+                {
+                    ["id"] = id, ["directory"] = directory, ["mode"] = mode, ["enabled"] = enabled
+                });
+            }
+
+            var data = JsonSerializer.SerializeToUtf8Bytes(
+                new Dictionary<string, object?> { ["projects"] = entries }, Pretty);
+            if (data.Length > maxBytes) return Fail("项目授权清单超过 64 KiB。");
+
+            var existed = File.Exists(projects);
+            var original = existed ? File.ReadAllBytes(projects) : null;
+            using (var saveLock = new FileStream(projects + ".agentdeck.lock",
+                       FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            {
+                var current = File.Exists(projects) ? File.ReadAllBytes(projects) : null;
+                if ((current is null) != (original is null) ||
+                    (current is not null && !current.AsSpan().SequenceEqual(original)))
+                    return Fail("授权清单已在其他窗口修改。请关闭后重新打开。");
+                var temporary = Path.Combine(Path.GetDirectoryName(projects)!, $"projects-{Guid.NewGuid():N}.tmp");
+                try
+                {
+                    using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write))
+                    {
+                        file.Write(data);
+                        file.Flush(flushToDisk: true);
+                    }
+                    if (original is null) File.Move(temporary, projects);
+                    else File.Replace(temporary, projects, null);
+                }
+                finally
+                {
+                    if (File.Exists(temporary)) File.Delete(temporary);
+                }
+            }
+            return new JsonObject { ["ok"] = true, ["message"] = "授权清单已保存。" }.ToJsonString();
+        }
+        catch (Exception error)
+        {
+            return Fail(error.Message);
+        }
+    }
+
     private static string Fail(string message) =>
         new JsonObject { ["ok"] = false, ["message"] = message }.ToJsonString();
 
@@ -950,17 +1047,86 @@ internal sealed class DeckBridge
         }
     }
 
-    private async Task<string> EnrollAsync(RelayWindow dialog, bool replace)
+    // WebView variant of ConfigureRelayAsync: the three fields and their
+    // validation live in the page, so they arrive here as arguments. A cert
+    // repin is answered with repinConfirm so the page can ask in its own
+    // visual language instead of a native MessageBox.
+    internal async Task<string> RegisterRelayAsync(string endpoint, string fingerprint, string token, bool replace)
+    {
+        try
+        {
+            endpoint = endpoint.Trim();
+            fingerprint = fingerprint.Replace(":", "").Replace(" ", "").Trim().ToLowerInvariant();
+            token = token.Trim();
+            if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri) || uri.Scheme != "wss" || uri.Host.Length == 0)
+                return Fail("请输入以 wss:// 开头的 Relay 地址。");
+            if (fingerprint.Length != 64 || !fingerprint.All(Uri.IsHexDigit))
+                return Fail("请输入完整的 64 位十六进制证书指纹。");
+            if (token.Length != 64 || !token.All(Uri.IsHexDigit))
+                return Fail("请输入云端生成的 64 位十六进制注册令牌。");
+
+            string id;
+            if (replace)
+            {
+                // Confirmed repin: back up the pairing trust, re-enroll with
+                // -replace, restore on failure. Never a plain enroll first.
+                id = await RepinAsync(endpoint, fingerprint, token);
+            }
+            else
+            {
+                try
+                {
+                    id = await EnrollAsync(endpoint, fingerprint, token, replace: false);
+                }
+                catch (Exception error) when (PinnedToOldRelay(error.Message))
+                {
+                    return new JsonObject
+                    {
+                        ["ok"] = false,
+                        ["repinConfirm"] = true,
+                        ["message"] =
+                            "本机钉着的是旧证书，和这次填的对不上。\n\n" +
+                            "继续会把本机改钉到新证书，并用同一个设备 ID 重新注册：\n" +
+                            "· 项目白名单、路径与日志都保留\n" +
+                            "· 已配对的手机会连不上，需要在手机上重新扫码\n" +
+                            "· 旧的配对信任会改名留底，不删除\n\n继续？"
+                    }.ToJsonString();
+                }
+            }
+            var repinned = replace;
+            File.WriteAllText(RegisteredPath, id);
+            StartAgent(id);
+            return new JsonObject
+            {
+                ["ok"] = true,
+                ["message"] = repinned
+                    ? ServiceControl.Query().Installed ? "已改钉新证书。重启电脑后服务才会用新证书。" : "已改钉新证书。请在手机上重新扫码配对。"
+                    : "电脑已注册，正在连接 Relay。"
+            }.ToJsonString();
+        }
+        catch (Exception error)
+        {
+            return Fail(Explain(error.Message));
+        }
+    }
+
+    private async Task<string> EnrollAsync(RelayWindow dialog, bool replace) =>
+        await EnrollAsync(dialog.Endpoint, dialog.Fingerprint, dialog.Token, replace);
+
+    private async Task<string> EnrollAsync(string endpoint, string fingerprint, string token, bool replace)
     {
         var arguments = new List<string>
         {
-            "enroll", "-config", AgentConfig, "-relay-url", dialog.Endpoint, "-fingerprint", dialog.Fingerprint
+            "enroll", "-config", AgentConfig, "-relay-url", endpoint, "-fingerprint", fingerprint
         };
         if (replace) arguments.Add("-replace");
-        return (await RunWithInputAsync(dialog.Token, [.. arguments])).Trim();
+        return (await RunWithInputAsync(token, [.. arguments])).Trim();
     }
 
-    private async Task<string> RepinAsync(RelayWindow dialog)
+    private async Task<string> RepinAsync(RelayWindow dialog) =>
+        await RepinAsync(dialog.Endpoint, dialog.Fingerprint, dialog.Token);
+
+    private async Task<string> RepinAsync(string endpoint, string fingerprint, string token)
     {
         string? backup = null;
         if (Directory.Exists(PairingDirectory))
@@ -970,7 +1136,7 @@ internal sealed class DeckBridge
         }
         try
         {
-            var id = await EnrollAsync(dialog, replace: true);
+            var id = await EnrollAsync(endpoint, fingerprint, token, replace: true);
             StopAgent();
             return id;
         }

@@ -445,6 +445,16 @@ internal sealed class WebViewWindow : Form
             case "edit-projects":
                 result = bridge.EditProjects();
                 break;
+            case "pick-directory":
+                result = bridge.PickDirectory();
+                break;
+            case "save-projects":
+                result = bridge.SaveProjects(Arg("projects"));
+                break;
+            case "relay-register":
+                result = await bridge.RegisterRelayAsync(
+                    Arg("endpoint"), Arg("fingerprint"), Arg("token"), Arg("replace") == "true");
+                break;
             case "pause":
                 result = bridge.ToggleAgent();
                 break;
