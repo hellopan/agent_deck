@@ -3,6 +3,7 @@ package com.agentdeck.lab
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -58,6 +59,8 @@ internal class Desk(private val store: LabState, private val scope: CoroutineSco
 
     private var requestId = ""
     private var pollJob: Job? = null
+    private var pairJob: Job? = null
+    private var pairAttempt = 0
 
     val paired: Boolean get() = config != null
     val host: String? get() = hosts[device]
@@ -107,22 +110,54 @@ internal class Desk(private val store: LabState, private val scope: CoroutineSco
 
     fun refresh() = scope.launch { sync(silent = false, announce = true) }
 
-    fun pair(raw: String) = busyAction("正在配对…") {
-        val candidate = withContext(Dispatchers.IO) { requestPairing(raw) }
-        config = candidate.config
-        endpoint = candidate.config.getString("relayUrl")
-        device = candidate.device
-        fingerprint = candidate.fingerprint
-        hosts = hosts + (candidate.device to candidate.host)
-        projects = emptyList()
-        project = ""
-        items = emptyList()
-        approvals = emptyList()
-        running = null
-        awaitingConfirm = true
-        reachable = null
-        save()
-        notice = "已把指纹发给电脑，请在电脑上确认这台手机"
+    /**
+     * Scanning again while an attempt is still running replaces that attempt.
+     * The first version funneled pairing through [busyAction], which returns
+     * early while [busy] is set — so after one failure the phone looked like it
+     * ignored every further scan until the slow TLS timeouts drained. A token
+     * keeps the cancelled attempt from clearing the state of its replacement.
+     */
+    fun pair(raw: String) {
+        pairJob?.cancel()
+        val attempt = ++pairAttempt
+        pairJob = scope.launch {
+            busy = true
+            notice = "正在配对…"
+            error = null
+            try {
+                val candidate = withContext(Dispatchers.IO) { requestPairing(raw) }
+                if (attempt != pairAttempt) {
+                    // Another scan already took over; this key never becomes
+                    // the phone's identity, so drop it instead of leaving an
+                    // alias in the keystore for every abandoned attempt.
+                    discardPairing(candidate.config)
+                    return@launch
+                }
+                config = candidate.config
+                endpoint = candidate.config.getString("relayUrl")
+                device = candidate.device
+                fingerprint = candidate.fingerprint
+                hosts = hosts + (candidate.device to candidate.host)
+                projects = emptyList()
+                project = ""
+                items = emptyList()
+                approvals = emptyList()
+                running = null
+                awaitingConfirm = true
+                reachable = null
+                save()
+                notice = "已把指纹发给电脑，请在电脑上确认这台手机"
+            } catch (cancel: CancellationException) {
+                throw cancel
+            } catch (failure: Exception) {
+                if (attempt == pairAttempt) {
+                    error = readable(failure)
+                    notice = ""
+                }
+            } finally {
+                if (attempt == pairAttempt) busy = false
+            }
+        }
     }
 
     fun switchDevice(id: String) {
@@ -222,9 +257,30 @@ internal class Desk(private val store: LabState, private val scope: CoroutineSco
         error = null
     }
 
+    /** A failure the caller observed itself, such as an empty scan result. It
+     *  goes to [error] because the connect screen prints that one under the
+     *  scan button; notices are hidden there. */
+    fun fail(text: String) {
+        notice = ""
+        error = text
+    }
+
+    /** One line of feedback from outside the poll loop (a deep link that has
+     *  already been handled, for example). */
+    fun showNotice(text: String) {
+        notice = text
+        error = null
+    }
+
     internal fun api(): AgentApi? {
         val pairing = config ?: return null
-        return AgentApi(pairing, device, endpoint)
+        // A half-written config (pairing that never finished, a config restored
+        // from an old backup) must read as "not paired", not as a crash on a
+        // screen that only wanted to show a log. RelayClient validates certs and
+        // the keystore alias in its constructor, so it can throw here.
+        return runCatching { AgentApi(pairing, device, endpoint) }.onFailure {
+            android.util.Log.w("AgentDeck", "api unavailable", it)
+        }.getOrNull()
     }
 
     private suspend fun sync(silent: Boolean, announce: Boolean = false) {
@@ -239,11 +295,17 @@ internal class Desk(private val store: LabState, private val scope: CoroutineSco
             val queue = withContext(Dispatchers.IO) { api.queue() }
             items = queue
             reachable = true
+            // The pairing notice is posted while the connect screen is showing,
+            // where the auto-dismiss timer never starts. Once the PC confirms
+            // and the first sync succeeds, retire it here instead of leaving
+            // "请在电脑上确认" on screen next to a green 已连接.
+            if (awaitingConfirm) notice = ""
             awaitingConfirm = false
             error = null
             if (projects.isEmpty()) loadProjects(api)
         } catch (failure: Exception) {
             reachable = false
+            android.util.Log.w("AgentDeck", "sync failed", failure)
             if (!silent) error = readable(failure)
         }
     }

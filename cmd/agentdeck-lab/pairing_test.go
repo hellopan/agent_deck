@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,12 +37,24 @@ func TestPairingRequiresMatchingLocalConfirmation(t *testing.T) {
 	if err := pairingInvite(host, folder, "a", &wire); err != nil {
 		t.Fatal(err)
 	}
-	if bytes.Contains(wire.Bytes(), []byte("PRIVATE KEY")) {
-		t.Fatal("QR includes a private key")
+	if bytes.Contains(wire.Bytes(), []byte("PRIVATE KEY")) || bytes.Contains(wire.Bytes(), []byte("CERTIFICATE")) {
+		t.Fatal("QR includes a key or a whole certificate")
 	}
-	var invite pairingOffer
+	// 367 bytes is the largest payload that still fits a version 12 code at
+	// ECC L (65 modules across). Anything bigger starts costing module size,
+	// which is exactly what made the old invite unscannable.
+	if wire.Len() > 367 {
+		t.Fatalf("pairing QR grew to %d bytes", wire.Len())
+	}
+	t.Logf("pairing QR is %d bytes", wire.Len())
+	var invite pairingQR
 	if err := json.Unmarshal(wire.Bytes(), &invite); err != nil {
 		t.Fatal(err)
+	}
+	for _, pin := range []string{invite.RelayPin, invite.PeerPin} {
+		if len(pin) != 43 || strings.ContainsAny(pin, "+/=") {
+			t.Fatalf("pin %q is not base64url without padding", pin)
+		}
 	}
 	phone, err := issueIdentity("new-phone", x509.ExtKeyUsageClientAuth, labValidity)
 	if err != nil {

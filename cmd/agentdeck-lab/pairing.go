@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"crypto/x509"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
@@ -22,6 +23,39 @@ type pairingOffer struct {
 	Expires time.Time `json:"expires"`
 }
 
+// pairingQR is the document inside the QR code. Every field name is one or two
+// characters on purpose: the invite used to carry two PEM certificates (1177 of
+// its 1640 bytes), which pushed the code to version 29 — 149 modules across, so
+// dense that a phone camera had under two pixels per module and could not read
+// it. Two SPKI pins and short keys bring the same authority down to version 12.
+type pairingQR struct {
+	Version  int    `json:"v"`
+	RelayURL string `json:"u"`
+	Device   string `json:"d"`
+	Code     string `json:"c"`
+	Host     string `json:"h,omitempty"`
+	Token    string `json:"t"`
+	RelayPin string `json:"rp"`
+	PeerPin  string `json:"pp"`
+}
+
+// pairingPin hashes a certificate's public key (SPKI), base64url without
+// padding: 43 characters that stand in for a 542-byte PEM. The phone compares
+// the hash of the key it is shown, so an impostor needs the private key, not
+// merely a certificate signed by someone the phone has never met.
+func pairingPin(certificate string) (string, error) {
+	block, _ := pem.Decode([]byte(certificate))
+	if block == nil || block.Type != "CERTIFICATE" {
+		return "", errors.New("pairing invite needs a PEM certificate")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(cert.RawSubjectPublicKeyInfo)
+	return base64.RawURLEncoding.EncodeToString(sum[:]), nil
+}
+
 // pairingInvite transfers only the route credential and public trust material.
 func pairingInvite(agent, folder, device string, output io.Writer) error {
 	var host peerConfig
@@ -34,7 +68,14 @@ func pairingInvite(agent, folder, device string, output io.Writer) error {
 	if _, ok := host.Devices[device]; !ok || host.PhoneRouteToken == "" {
 		return errors.New("Agent has no phone route. Enroll this PC in the Relay first.")
 	}
-	entry := deviceConfig{Token: host.PhoneRouteToken, PeerName: device + ".agentdeck.test", PeerCertificate: host.Identity.Certificate}
+	relayPin, err := pairingPin(host.RelayCertificate)
+	if err != nil {
+		return err
+	}
+	peerPin, err := pairingPin(host.Identity.Certificate)
+	if err != nil {
+		return err
+	}
 	code, err := routeToken()
 	if err != nil {
 		return err
@@ -52,15 +93,16 @@ func pairingInvite(agent, folder, device string, output io.Writer) error {
 	if err := publishSubmission(root, "offer-"+code+".local.json", data); err != nil {
 		return err
 	}
-	return json.NewEncoder(output).Encode(struct {
-		Version          int          `json:"version"`
-		Code             string       `json:"code"`
-		Device           string       `json:"device"`
-		Host             string       `json:"host,omitempty"`
-		RelayURL         string       `json:"relayUrl"`
-		RelayCertificate string       `json:"relayCertificate"`
-		Entry            deviceConfig `json:"entry"`
-	}{1, code, device, hostName(), host.RelayURL, host.RelayCertificate, entry})
+	return json.NewEncoder(output).Encode(pairingQR{
+		Version:  2,
+		RelayURL: host.RelayURL,
+		Device:   device,
+		Code:     code,
+		Host:     hostName(),
+		Token:    host.PhoneRouteToken,
+		RelayPin: relayPin,
+		PeerPin:  peerPin,
+	})
 }
 
 // hostName labels a pairing invite so the phone can name the machine it drives.

@@ -4,13 +4,41 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 )
+
+// trace writes one line per tunnel step to AGENTDECK_TRACE when that variable
+// names a file. Pairing failures on the phone are opaque from the desktop, so
+// this records what the Agent actually saw without changing normal behaviour.
+var (
+	traceOnce sync.Once
+	traceFile *os.File
+)
+
+func trace(format string, args ...any) {
+	path := os.Getenv("AGENTDECK_TRACE")
+	if path == "" {
+		return
+	}
+	traceOnce.Do(func() {
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+		if err == nil {
+			traceFile = file
+		}
+	})
+	if traceFile == nil {
+		return
+	}
+	fmt.Fprintf(traceFile, time.Now().Format("15:04:05.000 ")+format+"\n", args...)
+}
 
 func dialTunnel(ctx context.Context, endpoint, routeToken string, client *http.Client) (net.Conn, error) {
 	address, err := url.Parse(endpoint)
@@ -71,10 +99,24 @@ func RunAgent(ctx context.Context, endpoint, routeToken string, client *http.Cli
 	config.MinVersion = tls.VersionTLS13
 	for ctx.Err() == nil {
 		conn, err := dialTunnel(ctx, endpoint, routeToken, client)
+		if err != nil {
+			trace("dial failed: %v", err)
+		}
 		if err == nil {
+			trace("tunnel open local=%s", conn.LocalAddr())
 			secured := tls.Server(conn, config)
-			if secured.HandshakeContext(ctx) == nil {
+			if handshakeErr := secured.HandshakeContext(ctx); handshakeErr == nil {
+				state := secured.ConnectionState()
+				subject := ""
+				if len(state.PeerCertificates) > 0 {
+					subject = state.PeerCertificates[0].Subject.String()
+				}
+				trace("handshake ok version=%x cipher=%s peer=%q", state.Version,
+					tls.CipherSuiteName(state.CipherSuite), subject)
 				serve(secured)
+				trace("serve returned")
+			} else {
+				trace("handshake failed: %v", handshakeErr)
 			}
 			conn.Close()
 		}
