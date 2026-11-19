@@ -25,12 +25,19 @@
   var seq = 0;
   var pending = new Map();
 
+  // The reply-correlation id lives under a reserved key. Business payloads
+  // legitimately carry their own `id` (project id), so a plain `id` key here
+  // used to be overwritten by `extra` — the host then echoed a string back as
+  // a bare JSON token and WebView2 rejected the message with ArgumentException.
+  var RID = "__rid";
   function call(command, extra, timeoutMs) {
     return new Promise(function (resolve) {
       var id = ++seq;
       pending.set(id, resolve);
-      var message = { deck: command, id: id };
+      var message = { deck: command };
       if (extra) for (var key in extra) message[key] = extra[key];
+      // Correlation key wins, always: never let a payload shadow it.
+      message[RID] = id;
       bridge.postMessage(message);
       setTimeout(function () {
         if (!pending.has(id)) return;

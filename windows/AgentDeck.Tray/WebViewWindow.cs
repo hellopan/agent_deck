@@ -341,7 +341,13 @@ internal sealed class WebViewWindow : Form
             !root.TryGetProperty("deck", out var deckNode)) return;
 
         var command = deckNode.GetString();
-        string? id = root.TryGetProperty("id", out var idNode) ? idNode.ToString() : null;
+        // Correlation id is a reserved numeric key (__rid). Never read the
+        // business-level `id` here: it can be a project id string, which used
+        // to be spliced into the reply envelope as a bare JSON token and make
+        // PostWebMessageAsJson throw ArgumentException on the UI thread.
+        string? id = root.TryGetProperty("__rid", out var idNode) &&
+                     idNode.ValueKind == JsonValueKind.Number
+            ? idNode.GetRawText() : null;
         string Text(string key) => root.TryGetProperty(key, out var node) && node.ValueKind == JsonValueKind.String
             ? node.GetString() ?? "" : "";
 
@@ -470,11 +476,17 @@ internal sealed class WebViewWindow : Form
         if (closing || view.CoreWebView2 is null) return;
         try
         {
+            // `id` is a raw JSON number from OnMessage's __rid field, so the
+            // envelope is always well-formed. Do NOT quote it: the page keys
+            // `pending` by the same number, so a string would never match.
             var envelope = id is null
                 ? $$"""{"channel":"{{channel}}","data":{{json}}}"""
                 : $$"""{"channel":"{{channel}}","id":{{id}},"data":{{json}}}""";
             view.CoreWebView2.PostWebMessageAsJson(envelope);
         }
-        catch (Exception error) when (error is InvalidOperationException or ObjectDisposedException) { }
+        // PostWebMessageAsJson throws ArgumentException for a malformed JSON
+        // string. Swallow it here so a bad reply can never escape onto the
+        // WinForms UI thread and pop the JIT debug dialog.
+        catch (Exception error) when (error is InvalidOperationException or ObjectDisposedException or ArgumentException) { }
     }
 }
